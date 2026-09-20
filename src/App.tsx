@@ -23,7 +23,7 @@ export default function App() {
   const motion=useRef<GuitarMotion>({progress:0,reduced:false,pulse:1});
   const [menu,setMenu]=useState(false),[about,setAbout]=useState(false),[docked,setDocked]=useState(false),[reduced,setReduced]=useState(false);
   const [loaded,setLoaded]=useState(false);
-  const {music,hover,click,guitar,toggle,soundEnabled,setSoundEnabled,playEffect}=useSiteAudio();
+  const {music,hover,click,guitar,toggle,soundEnabled,needsInteraction,setSoundEnabled,playEffect}=useSiteAudio();
   const [note,setNote]=useState(-1);
   const noteBox=useRef<HTMLDivElement>(null);
   useEffect(()=>{
@@ -192,9 +192,10 @@ export default function App() {
     <CursorRing/>
     <audio ref={guitar} src="/audio/guitar.wav" preload="auto" hidden/>
     <audio ref={toggle} src="/audio/card-click.mp3" preload="auto" hidden/>
-    <audio ref={music} src="/audio/background.wav" loop preload="none" hidden/>
+    <audio ref={music} src="/audio/background.wav" loop preload="auto" hidden/>
     <audio ref={hover} src="/audio/card-hover.mp3" preload="auto" hidden/>
     <audio ref={click} src="/audio/card-click.mp3" preload="auto" hidden/>
+    {needsInteraction&&soundEnabled&&<div className="sound-hint" role="status">Нажмите, чтобы включить музыку</div>}
     <div className="sound-toggle" data-enabled={soundEnabled} role="group" aria-label="Звук"><button aria-label="Включить звук" aria-pressed={soundEnabled} onClick={()=>setSoundEnabled(true)}><Volume2 size={19}/></button><button aria-label="Выключить звук" aria-pressed={!soundEnabled} onClick={()=>setSoundEnabled(false)}><VolumeX size={19}/></button></div>
     {!loaded&&<LoadingIntro onComplete={finishLoading}/>}
     <dialog ref={dialog} className="project-dialog" aria-label={menu?'Меню Павла Лугинина':'О проекте VOTEL-ROGE'} onCancel={close} onClick={e=>{if(e.target===e.currentTarget)close();}}><button className="dialog-close" aria-label="Закрыть" onClick={close}><X/></button>

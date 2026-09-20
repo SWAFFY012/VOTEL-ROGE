@@ -10,6 +10,7 @@ export function useSiteAudio() {
   const enabled = useRef(true);
   const request = useRef(0);
   const [soundEnabled, setEnabled] = useState(true);
+  const [needsInteraction, setNeedsInteraction] = useState(false);
 
   const startMusic = useCallback((version: number) => {
     const track = music.current;
@@ -18,14 +19,28 @@ export function useSiteAudio() {
     // Browsers may require an interaction before allowing audible playback.
     void track.play().then(() => {
       if (version !== request.current || !enabled.current) return;
+      setNeedsInteraction(false);
       gsap.killTweensOf(track);
       gsap.to(track, { volume: 0.3, duration: 4, ease: 'sine.inOut' });
-    }).catch(() => {});
+    }).catch(() => {
+      if (version === request.current && enabled.current) setNeedsInteraction(true);
+    });
   }, []);
 
   const setSoundEnabled = useCallback((next: boolean) => {
     const track = music.current;
-    if (!track || next === enabled.current) return;
+    if (!track) return;
+    if (next === enabled.current) {
+      if (next && track.paused) {
+        if (toggle.current) {
+          toggle.current.volume = 0.2;
+          toggle.current.currentTime = 0;
+          void toggle.current.play().catch(() => {});
+        }
+        startMusic(++request.current);
+      }
+      return;
+    }
     // The switch acknowledges both enabling and disabling, independently of mute.
     if (toggle.current) {
       toggle.current.volume = 0.2;
@@ -35,6 +50,7 @@ export function useSiteAudio() {
     const version = ++request.current;
     enabled.current = next;
     setEnabled(next);
+    if (!next) setNeedsInteraction(false);
     gsap.killTweensOf(track);
     if (next) {
       startMusic(version);
@@ -73,15 +89,19 @@ export function useSiteAudio() {
     };
     document.addEventListener('pointerdown', resume, true);
     document.addEventListener('keydown', resume, true);
+    document.addEventListener('touchend', resume, true);
+    document.addEventListener('wheel', resume, { passive: true });
     return () => {
       ++request.current;
       document.removeEventListener('pointerdown', resume, true);
       document.removeEventListener('keydown', resume, true);
+      document.removeEventListener('touchend', resume, true);
+      document.removeEventListener('wheel', resume);
       tracks.forEach(track => {
         if (track) { gsap.killTweensOf(track); track.pause(); }
       });
     };
   }, [startMusic]);
 
-  return { music, hover, click, guitar, toggle, soundEnabled, setSoundEnabled, playEffect };
+  return { music, hover, click, guitar, toggle, soundEnabled, needsInteraction, setSoundEnabled, playEffect };
 }

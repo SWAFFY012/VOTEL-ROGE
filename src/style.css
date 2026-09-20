@@ -252,6 +252,7 @@ button:focus-visible,a:focus-visible { outline:2px solid #fff5e8; outline-offset
 .platform-card a { padding:20px; gap:12px; font-size:clamp(18px,1.7vw,30px); }
 .final-field .about-panel { bottom:7%; }
 .sound-toggle { position:fixed; right:22px; bottom:18px; z-index:80; display:flex; gap:3px; padding:5px; border-radius:40px; background:#f1f1f1; box-shadow:0 4px 18px #0001; }
+.sound-hint { position:fixed; z-index:80; right:126px; bottom:32px; padding:10px 15px; border-radius:20px; background:#f1f1f1; color:#151515; box-shadow:0 4px 18px #0002; font:13px/1.2 Arial,sans-serif; pointer-events:none; }
 .sound-toggle::before { content:""; position:absolute; left:5px; top:5px; width:42px; height:42px; border-radius:50%; background:#0095ff; box-shadow:0 3px 10px #0095ff55; transform:translateX(45px); transition:transform .55s cubic-bezier(.22,1,.36,1); pointer-events:none; }
 .sound-toggle[data-enabled=true]::before { transform:translateX(0); }
 .sound-toggle button { position:relative; z-index:1; background:transparent; display:grid; place-items:center; width:42px; height:42px; border-radius:50%; color:#151515; transition:color .3s; }
@@ -265,6 +266,7 @@ button:focus-visible,a:focus-visible { outline:2px solid #fff5e8; outline-offset
  .letov-note { top:25%; right:4%; width:70%; padding:15px 25px 15px 18px; }
  .letov-note p { font-size:13px; }
  .sound-toggle { right:12px; bottom:10px; transform:scale(.85); transform-origin:bottom right; }
+ .sound-hint { right:106px; bottom:21px; max-width:160px; font-size:11px; }
  .sculpture-intro h2,.sculpture-headline h2 { max-width:94vw; font-size:11.5vw; line-height:.9; }
  .sculpture-headline { padding-bottom:17vh; }
  .portal-copy { padding-top:28vh; }
