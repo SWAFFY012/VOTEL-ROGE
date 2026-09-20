@@ -55,10 +55,18 @@ export default function App() {
     const el=video.current!, portal=portalVideo.current!;
     el.muted=true;el.defaultMuted=true;el.playbackRate=1;el.loop=false;
     const media=matchMedia('(prefers-reduced-motion: reduce)');
+    let replayTimer:ReturnType<typeof setTimeout>|undefined;
     const replayFromColor=()=>{
-      const colorStart=4.9;
-      el.currentTime=Number.isFinite(el.duration)?Math.min(colorStart,Math.max(0,el.duration-.1)):colorStart;
-      if(!media.matches)el.play().catch(()=>{});
+      el.pause();
+      if(Number.isFinite(el.duration))el.currentTime=Math.max(0,el.duration-.06);
+      clearTimeout(replayTimer);
+      if(media.matches)return;
+      replayTimer=setTimeout(()=>{
+        replayTimer=undefined;
+        const colorStart=4.9;
+        el.currentTime=Number.isFinite(el.duration)?Math.min(colorStart,Math.max(0,el.duration-.1)):colorStart;
+        el.play().catch(()=>{});
+      },5000);
     };
     el.addEventListener('ended',replayFromColor);
     portal.muted=true;portal.defaultMuted=true;portal.pause();
@@ -69,7 +77,7 @@ export default function App() {
     portal.addEventListener('ended',freezePortal);
     const preference=()=>{
       motion.current.reduced=media.matches;setReduced(media.matches);
-      if(media.matches)el.pause();else el.play().catch(()=>{});
+      if(media.matches){clearTimeout(replayTimer);replayTimer=undefined;el.pause();}else if(!replayTimer)el.play().catch(()=>{});
     };
     preference();media.addEventListener('change',preference);
     let raf=0;
@@ -108,7 +116,7 @@ export default function App() {
         .to(brand,{y:()=>innerHeight*.04,scale:compactScale,duration:.15},.05)
         .to('.subtitle',{scale:1.7,transformOrigin:'50% 0',duration:.15},.05)
         .to('.brand-lockup',{color:'#191919',textShadow:'0 0 0 transparent',duration:.035},.20)
-        .to('.brand-lockup',{color:'#fff5e8',textShadow:'0 2px 18px #19000855',duration:.04},.915)
+        .to('.brand-lockup',{color:'#fff5e8',textShadow:'0 3px 5px #0d0708, 0 0 22px #16060c',duration:.04},.915)
         .to(brand,{y:()=>innerHeight*.01,duration:.05},.91)
         .to({},{duration:.001},.999);
       ScrollTrigger.create({trigger:'.scroll-track',start:'top top',end:'bottom bottom',scrub:.9,animation:tl,invalidateOnRefresh:true});
@@ -146,7 +154,7 @@ export default function App() {
         if(motion.current.reduced)tl.progress(1);
       };tick();
     },root);
-    return()=>{cancelAnimationFrame(raf);context.revert();media.removeEventListener('change',preference);el.removeEventListener('ended',replayFromColor);portal.removeEventListener('ended',freezePortal);portal.removeEventListener('loadedmetadata',preparePortal);};
+    return()=>{clearTimeout(replayTimer);cancelAnimationFrame(raf);context.revert();media.removeEventListener('change',preference);el.removeEventListener('ended',replayFromColor);portal.removeEventListener('ended',freezePortal);portal.removeEventListener('loadedmetadata',preparePortal);};
   },[]);
   useEffect(()=>{
     if(menu||about){lastFocus.current=document.activeElement as HTMLElement;dialog.current?.showModal();}
@@ -169,7 +177,7 @@ export default function App() {
       <div className="white-scene" aria-hidden="true"/>
       <div className="portal-window" aria-hidden="true"><img src="/cover.jpg" alt=""/><video ref={portalVideo} src="/intro.mp4" muted playsInline preload="auto"/></div>
       <div className="portal-copy" aria-hidden="true"><h2><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">где</i></b> <b className="word-mask"><span className="animated-word">ПАМЯТЬ</span></b></span></span><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">становится</i></b> <b className="word-mask"><span className="animated-word">ЗВУКОМ</span></b></span></span></h2></div>
-      <div className="brand-lockup"><h1 className="wordmark"><span className="hero-mask"><span aria-label="VOTEL-ROGE">{'VOTEL-ROGE'.split('').map((letter,index)=><span key={index} className="hero-glyph" aria-hidden="true" style={{filter:'url(#glyph-'+index+')'}}>{letter}</span>)}</span></span></h1><p className="subtitle"><span className="hero-mask"><i className="hero-word">ЛУДЖИ</i></span></p></div>
+      <div className="brand-lockup"><h1 className="wordmark"><span className="hero-mask"><span aria-label="VOTEL-ROGE">{'VOTEL-ROGE'.split('').map((letter,index)=><span key={index} className="hero-glyph" aria-hidden="true" style={{filter:'url(#glyph-'+index+')'}}>{letter}</span>)}</span></span></h1><p className="subtitle"><span className="hero-mask"><i className="hero-word">Павел Лугинин</i></span></p></div>
       <div className="sculpture-intro" aria-hidden="true"><h2><span className="reveal-line"><span><b className="word-mask"><span className="animated-word">ТВОЙ</span></b> <b className="word-mask"><span className="animated-word">САМЫЙ</span></b></span></span><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">важный</i></b> <b className="word-mask"><span className="animated-word">ЗВУК</span></b></span></span></h2></div>
       <div className="sculpture-headline" aria-hidden="true"><h2><span className="reveal-line"><span><b className="word-mask"><span className="animated-word">ДОСТОИН</span></b> <b className="word-mask"><span className="animated-word">ЖИТЬ</span></b></span></span><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">вечно.</i></b></span></span></h2></div>
       <GuitarScene motion={motion}/>
@@ -189,8 +197,8 @@ export default function App() {
     <audio ref={click} src="/audio/card-click.mp3" preload="auto" hidden/>
     <div className="sound-toggle" data-enabled={soundEnabled} role="group" aria-label="Звук"><button aria-label="Включить звук" aria-pressed={soundEnabled} onClick={()=>setSoundEnabled(true)}><Volume2 size={19}/></button><button aria-label="Выключить звук" aria-pressed={!soundEnabled} onClick={()=>setSoundEnabled(false)}><VolumeX size={19}/></button></div>
     {!loaded&&<LoadingIntro onComplete={finishLoading}/>}
-    <dialog ref={dialog} className="project-dialog" aria-label={menu?'Меню ЛУДЖИ':'О проекте VOTEL-ROGE'} onCancel={close} onClick={e=>{if(e.target===e.currentTarget)close();}}><button className="dialog-close" aria-label="Закрыть" onClick={close}><X/></button>
-      {menu?<><span className="eyebrow">ЛУДЖИ</span><h2>Куда <i>дальше?</i></h2><nav><button onClick={()=>scrollTo(0)}>Начало <ArrowUpRight/></button><button onClick={()=>scrollTo(.3)}>История гитары <ArrowUpRight/></button><button onClick={()=>scrollTo(1)}>Слушать проект <Music2/></button></nav></>:<><span className="eyebrow">О ПРОЕКТЕ</span><h2>VOTEL-ROGE</h2><p>Инструментальный проект — новый этап творчества. Здесь музыка говорит через тембр, ритм и пространство.</p><p>В центре этой визуальной истории — гитара Егора Летова, следы времени и память о свободе творчества.</p><p className="draft-note">Текст для первого макета. Подробности проекта и ссылки на релизы будут добавлены позже.</p></>}
+    <dialog ref={dialog} className="project-dialog" aria-label={menu?'Меню Павла Лугинина':'О проекте VOTEL-ROGE'} onCancel={close} onClick={e=>{if(e.target===e.currentTarget)close();}}><button className="dialog-close" aria-label="Закрыть" onClick={close}><X/></button>
+      {menu?<><span className="eyebrow">Павел Лугинин</span><h2>Куда <i>дальше?</i></h2><nav><button onClick={()=>scrollTo(0)}>Начало <ArrowUpRight/></button><button onClick={()=>scrollTo(.3)}>История гитары <ArrowUpRight/></button><button onClick={()=>scrollTo(1)}>Слушать проект <Music2/></button></nav></>:<><span className="eyebrow">О ПРОЕКТЕ</span><h2>VOTEL-ROGE</h2><p>Инструментальный проект — новый этап творчества. Здесь музыка говорит через тембр, ритм и пространство.</p><p>В центре этой визуальной истории — гитара Егора Летова, следы времени и память о свободе творчества.</p><p className="draft-note">Текст для первого макета. Подробности проекта и ссылки на релизы будут добавлены позже.</p></>}
     </dialog>
   </main>;
 }

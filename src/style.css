@@ -273,5 +273,19 @@ button:focus-visible,a:focus-visible { outline:2px solid #fff5e8; outline-offset
  .final-field .platform-card,.final-field .about-panel { inset:auto; width:auto; }
  .platform-card a { min-height:43px; padding:8px; gap:6px; font-size:12px; }
  .final-field .about-panel { padding:7px; }
- .final-field .about-panel h2 { font-size:20px; }
+.final-field .about-panel h2 { font-size:20px; }
 }
+
+/* Solid warm cards stay legible over the detailed floral cover. */
+.final-field .action-panel {
+  background:rgba(35,27,24,.88);
+  border:1px solid rgba(255,244,228,.16);
+  box-shadow:0 8px 26px rgba(10,4,3,.25),inset 0 1px rgba(255,255,255,.08);
+  backdrop-filter:blur(12px) saturate(85%);
+  -webkit-backdrop-filter:blur(12px) saturate(85%);
+  color:#fff7ee;
+}
+.final-field .platform-card a:hover { background:rgba(255,255,255,.12); }
+.brand-lockup,.wordmark { text-shadow:0 3px 5px #0d0708,0 0 22px #16060c; }
+.subtitle { font-size:clamp(30px,2.5vw,39px); }
+@media(max-width:700px) { .subtitle { font-size:clamp(23px,5.4vw,31px); } }

@@ -7,9 +7,21 @@ export function useSiteAudio() {
   const click = useRef<HTMLAudioElement>(null);
   const guitar = useRef<HTMLAudioElement>(null);
   const toggle = useRef<HTMLAudioElement>(null);
-  const enabled = useRef(false);
+  const enabled = useRef(true);
   const request = useRef(0);
-  const [soundEnabled, setEnabled] = useState(false);
+  const [soundEnabled, setEnabled] = useState(true);
+
+  const startMusic = useCallback((version: number) => {
+    const track = music.current;
+    if (!track || !enabled.current) return;
+    if (track.paused) track.volume = 0;
+    // Browsers may require an interaction before allowing audible playback.
+    void track.play().then(() => {
+      if (version !== request.current || !enabled.current) return;
+      gsap.killTweensOf(track);
+      gsap.to(track, { volume: 0.3, duration: 4, ease: 'sine.inOut' });
+    }).catch(() => {});
+  }, []);
 
   const setSoundEnabled = useCallback((next: boolean) => {
     const track = music.current;
@@ -25,16 +37,7 @@ export function useSiteAudio() {
     setEnabled(next);
     gsap.killTweensOf(track);
     if (next) {
-      if (track.paused) track.volume = 0;
-      // Start inside the user gesture; begin fading only when playback is ready.
-      void track.play().then(() => {
-        if (version !== request.current || !enabled.current) return;
-        gsap.to(track, { volume: 0.3, duration: 4, ease: 'sine.inOut' });
-      }).catch(() => {
-        if (version !== request.current) return;
-        enabled.current = false;
-        setEnabled(false);
-      });
+      startMusic(version);
     } else {
       [hover.current, click.current, guitar.current].forEach(effect => {
         if (effect) { effect.pause(); effect.currentTime = 0; }
@@ -44,7 +47,7 @@ export function useSiteAudio() {
         onComplete: () => { if (!enabled.current) track.pause(); },
       });
     }
-  }, []);
+  }, [startMusic]);
 
   const playEffect = useCallback((kind: 'hover' | 'click' | 'guitar') => {
     if (!enabled.current) return;
@@ -61,13 +64,24 @@ export function useSiteAudio() {
 
   useEffect(() => {
     const tracks = [music.current, hover.current, click.current, guitar.current, toggle.current];
+    const version = ++request.current;
+    startMusic(version);
+    const resume = (event: Event) => {
+      if (!enabled.current || !music.current?.paused) return;
+      if ((event.target as Element | null)?.closest?.('[aria-label="Выключить звук"]')) return;
+      startMusic(request.current);
+    };
+    document.addEventListener('pointerdown', resume, true);
+    document.addEventListener('keydown', resume, true);
     return () => {
       ++request.current;
+      document.removeEventListener('pointerdown', resume, true);
+      document.removeEventListener('keydown', resume, true);
       tracks.forEach(track => {
         if (track) { gsap.killTweensOf(track); track.pause(); }
       });
     };
-  }, []);
+  }, [startMusic]);
 
   return { music, hover, click, guitar, toggle, soundEnabled, setSoundEnabled, playEffect };
 }
