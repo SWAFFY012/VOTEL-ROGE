@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "project": {
+    "name": "VOTEL-ROGE",
+    "productType": null,
+    "stack": [
+      "vite",
+      "react",
+      "typescript",
+      "tailwindcss",
+      "gsap",
+      "three"
+    ]
+  },
+  "sources": {
+    "tokens": [],
+    "components": [],
+    "assets": [],
+    "instructions": []
+  },
+  "design": {
+    "colorMode": "unknown",
+    "colors": {},
+    "typography": {},
+    "spacing": {},
+    "radius": {},
+    "shadows": {},
+    "motion": {},
+    "density": "unknown"
+  },
+  "components": {
+    "installed": [],
+    "preferredPrimitives": [],
+    "patterns": []
+  },
+  "constraints": {
+    "must": [],
+    "avoid": []
+  },
+  "decisions": [
+    "User-selected Vero scroll choreography and Louize wordmark",
+    "Static full-screen original cover and frame; no background deformation",
+    "Scroll-driven full guitar revolution then dock under wordmark",
+    "Oneheart pulse scale 1.1 with back.out easing",
+    "Transparent listening cards outside the portrait silhouette; no backend",
+    "Warm paper #f3f0ec for guitar chapter and loading shutters",
+    "Loader text separates vertically before square aperture expands",
+    "Portal heading and fixed-pixel square rise directly behind departing guitar"
+  ],
+  "evidence": [
+    {
+      "fact": "project.stack:vite",
+      "source": "package.json"
+    }
+  ],
+  "generatedAt": "2026-09-13T22:10:46.691Z"
+}

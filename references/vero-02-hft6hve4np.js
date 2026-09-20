@@ -1,0 +1,5 @@
+;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="c0e8a174-0302-b074-ba8c-77376a4249d1")}catch(e){}}();
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,935370,e=>{"use strict";var t=e.i(858133),i=e.i(613163);function n(){let e=(0,t.useRouter)();return(0,i.useEffect)(()=>{let t=new AbortController,i=0,n=()=>{let t=Date.now();t>i&&"hidden"!==document.visibilityState&&(e.refresh(),i=t+5e3)},{signal:s}=t;return document.addEventListener("visibilitychange",n,{passive:!0,signal:s}),window.addEventListener("focus",n,{passive:!0,signal:s}),()=>t.abort()},[e]),null}n.displayName="RefreshOnFocus",e.s(["default",0,n])}]);
+
+//# debugId=c0e8a174-0302-b074-ba8c-77376a4249d1
+//# sourceMappingURL=0fxqgokm~fyu4.js.map
