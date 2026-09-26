@@ -9,23 +9,46 @@ export function useSiteAudio() {
   const toggle = useRef<HTMLAudioElement>(null);
   const enabled = useRef(true);
   const request = useRef(0);
+  const audioGraph=useRef<{context:AudioContext;gain:GainNode}|null>(null);
+  const envelope=useRef({from:0,to:0,start:0,duration:4});
+  const ramp=useCallback((target:number)=>{
+    const track=music.current;if(!track)return;
+    if(!audioGraph.current){
+      const context=new AudioContext(),gain=context.createGain();
+      context.createMediaElementSource(track).connect(gain);gain.connect(context.destination);
+      const initial=track.paused?0:track.volume;
+      gain.gain.value=initial;audioGraph.current={context,gain};track.volume=1;
+      envelope.current={from:initial,to:initial,start:context.currentTime,duration:4};
+    }
+    const {context,gain}=audioGraph.current;
+    void context.resume();
+    const now=context.currentTime;
+    const previous=envelope.current;
+    const t=Math.min(1,Math.max(0,(now-previous.start)/previous.duration));
+    const current=previous.from+(previous.to-previous.from)*(t*t*(3-2*t));
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(current,now);
+    const curve=Float32Array.from({length:129},(_,i)=>{const p=i/128;return current+(target-current)*p*p*(3-2*p);});
+    gain.gain.setValueCurveAtTime(curve,now,4);
+    envelope.current={from:current,to:target,start:now,duration:4};
+  },[]);
   const [soundEnabled, setEnabled] = useState(true);
   const [needsInteraction, setNeedsInteraction] = useState(false);
 
   const startMusic = useCallback((version: number) => {
     const track = music.current;
     if (!track || !enabled.current) return;
-    if (track.paused) track.volume = 0;
+    if (track.paused && !audioGraph.current) track.volume = 0;
     // Browsers may require an interaction before allowing audible playback.
     void track.play().then(() => {
       if (version !== request.current || !enabled.current) return;
       setNeedsInteraction(false);
       gsap.killTweensOf(track);
-      gsap.to(track, { volume: 0.3, duration: 4, ease: 'sine.inOut' });
+      ramp(0.3);
     }).catch(() => {
       if (version === request.current && enabled.current) setNeedsInteraction(true);
     });
-  }, []);
+  }, [ramp]);
 
   const setSoundEnabled = useCallback((next: boolean) => {
     const track = music.current;
@@ -58,12 +81,11 @@ export function useSiteAudio() {
       [hover.current, click.current, guitar.current].forEach(effect => {
         if (effect) { effect.pause(); effect.currentTime = 0; }
       });
-      gsap.to(track, {
-        volume: 0, duration: 4, ease: 'sine.inOut',
-        onComplete: () => { if (!enabled.current) track.pause(); },
-      });
+      ramp(0);
+      // Silence is scheduled on the audio clock. No wall-clock pause may cut
+      // the envelope short if the context was suspended in a background tab.
     }
-  }, [startMusic]);
+  }, [startMusic,ramp]);
 
   const playEffect = useCallback((kind: 'hover' | 'click' | 'guitar') => {
     if (!enabled.current) return;

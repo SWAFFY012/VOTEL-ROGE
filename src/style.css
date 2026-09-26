@@ -291,3 +291,169 @@ button:focus-visible,a:focus-visible { outline:2px solid #fff5e8; outline-offset
 .brand-lockup,.wordmark { text-shadow:0 3px 5px #0d0708,0 0 22px #16060c; }
 .subtitle { font-size:clamp(30px,2.5vw,39px); }
 @media(max-width:700px) { .subtitle { font-size:clamp(23px,5.4vw,31px); } }
+
+/* Scrollable film, followed by one hand-peeled floral sheet. */
+.scroll-track { height:1400svh; }
+.backdrop .hero-scroll-frame { z-index:2; opacity:0; transform:translateY(2vh) scale(1.17); object-position:50% 48%; transition:opacity .28s ease; }
+.backdrop .hero-scroll-frame.is-ready { opacity:1; }
+.backdrop .hero-face-swap { z-index:3; opacity:0; visibility:hidden; transform:translateY(2vh) scale(1.17); object-position:50% 48%; pointer-events:none; }
+.backdrop .hero-face-swap.is-ready { visibility:visible; }
+.peel-scene { position:absolute; inset:0; z-index:8; overflow:hidden; opacity:0; visibility:hidden; pointer-events:none; touch-action:none; background:#141116; transition:opacity .28s ease,visibility .28s; user-select:none; }
+.peel-scene.is-active { opacity:1; visibility:visible; pointer-events:auto; }
+.peel-scene img { display:block; position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:50% 48%; transform:translateY(2vh) scale(1.17); user-select:none; }
+.peel-photo { z-index:0; }
+.peel-photo-original { z-index:1; }
+.peel-face,.peel-reverse { position:absolute; inset:0; clip-path:inset(0 0 0 var(--crease)); }
+.peel-face { z-index:2; }
+.peel-reverse { z-index:3; pointer-events:none; }
+.peel-reflection { position:absolute; inset:0; overflow:hidden; transform-origin:top left; transform:translateX(calc(2 * var(--crease))) scaleX(-1); }
+.peel-reflection img { filter:sepia(.25) saturate(.5) brightness(.58); }
+.peel-fold { position:absolute; z-index:4; top:0; bottom:0; left:var(--crease); width:clamp(12px,2.8vw,38px); transform:translateX(-45%) perspective(200px) rotateY(-35deg); transform-origin:left center; background:linear-gradient(90deg,#170c13ac,#f7dec099 35%,#170c1377 74%,transparent); box-shadow:-16px 0 26px #09020985,7px 0 18px #fff4db44; pointer-events:none; }
+.peel-scene.is-edge { cursor:grab; }
+.peel-scene.is-dragging { cursor:grabbing; }
+.peel-reflection .peel-backing { filter:brightness(0) invert(.88) sepia(.2); }
+.peel-reflection .peel-back-print { filter:saturate(.3); opacity:.12; }
+.peel-reflection { filter:drop-shadow(-8px 12px 14px #0008); }
+.peel-crease-light { position:absolute; z-index:4; width:22px; height:400vmax; margin-left:-11px; margin-top:-200vmax; transform-origin:50% 50%; pointer-events:none; background:linear-gradient(90deg,transparent,#0003 30%,#fff8 49%,#fff2 56%,transparent); }
+.peel-instruction { position:absolute; z-index:6; left:clamp(24px,4vw,70px); bottom:clamp(28px,5vh,70px); padding:13px 18px; color:#fffaf1; background:#1d1418ba; border:1px solid #fff5e955; border-radius:30px; font:500 clamp(12px,1vw,16px)/1.2 'Manrope',sans-serif; letter-spacing:.015em; pointer-events:none; }
+.peel-instruction span { margin-left:14px; font-size:21px; }
+.peel-story { position:absolute; z-index:9; left:8%; right:8%; bottom:12%; color:#fff9f0; text-shadow:0 2px 20px #000e; opacity:0; pointer-events:none; will-change:transform,opacity; }
+.peel-story>span { font:600 11px/1.4 'Manrope',sans-serif; letter-spacing:.21em; }
+.peel-story h2 { margin:18px 0 22px; font:400 clamp(52px,7vw,118px)/.88 Louize,Georgia,serif; letter-spacing:-.055em; }
+.peel-story i { font-family:'Cormorant Garamond',Georgia,serif; font-weight:400; }
+.peel-story p { max-width:680px; margin:0; font:400 clamp(17px,1.5vw,23px)/1.45 'Cormorant Garamond',Georgia,serif; }
+.brand-lockup { transition:opacity .28s ease; }
+.experience.in-peel .brand-lockup { opacity:0!important; }
+/* Brand belongs to the film only: gone from the peel onwards. */
+.experience.in-narrative .brand-lockup { opacity:0!important; visibility:hidden; transition:opacity .28s ease,visibility 0s .28s; }
+@media(max-width:700px) {
+  .scroll-track { height:1300svh; }
+  .peel-story { left:6%; right:6%; bottom:16%; }
+  .peel-story h2 { font-size:13vw; }
+  .peel-story p { font-size:18px; }
+  .peel-instruction { left:16px; bottom:58px; }
+}
+/* Continuous photographic scene: guitar remains a separate foreground canvas. */
+.meridian-scene {position:absolute;inset:0;z-index:0;visibility:hidden;background:#0d0b0c;pointer-events:none;}
+.meridian-scene canvas {width:100%;height:100%;display:block;}
+.in-narrative .meridian-scene {visibility:visible;}
+.in-narrative .backdrop {visibility:hidden;}
+/* Shadow on the whole heading: a text-shadow inside the overflow-hidden word
+   masks was cut to each word box and left light seams and edges. */
+.in-narrative .sculpture-intro,.in-narrative .sculpture-headline {color:#fff5e8;text-shadow:none;}
+/* A tight shadow for the letter edges plus a wide soft one that also covers
+   the gaps between words, so a bright photo never shows through as a strip. */
+.in-narrative .sculpture-intro h2,.in-narrative .sculpture-headline h2,.inspire-copy h2 {filter:drop-shadow(0 1px 2px #0009) drop-shadow(0 0 24px #0007);}
+
+.peel-reflection .peel-backing {filter:brightness(0) invert(.88);}
+.peel-reflection .peel-back-print {opacity:.10;}
+.peel-reflection {filter:none;}
+.peel-crease-light {display:none;}
+.scroll-track {height:1100svh;}
+@media(max-width:700px){.scroll-track {height:1100svh;}}
+/* Child cover chapter: three inspiration phrases, then the finale blink. */
+.scroll-track {height:1350svh;}
+@media(max-width:700px){.scroll-track {height:1350svh;}}
+.final-cover { position:absolute; inset:0; z-index:1; overflow:hidden; visibility:hidden; pointer-events:none; }
+.final-cover.is-shown { visibility:visible; }
+/* Same crop as the hero cover: the crimson matte stays outside the screen. */
+.final-cover img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:50% 48%; transform:translateY(2vh) scale(1.17); }
+.eye-blink { position:absolute; z-index:40; visibility:hidden; overflow:visible; pointer-events:none; filter:blur(max(6px,1.1vmin)); }
+/* Same type and word reveal as the guitar phrases, set left / right / left. */
+.inspire-copy { position:absolute; inset:0; z-index:6; display:flex; padding:0 6vw; color:#fff5e8; pointer-events:none; visibility:hidden; }
+.inspire-left { justify-content:flex-start; text-align:left; }
+.inspire-right { justify-content:flex-end; text-align:right; }
+.inspire-0 { align-items:flex-start; padding-top:16vh; }
+.inspire-1 { align-items:center; }
+.inspire-2 { align-items:flex-end; padding-bottom:14vh; }
+.inspire-copy h2 { margin:0; max-width:88vw; font-family:Louize,'Cormorant Garamond',Georgia,serif; font-size:clamp(48px,8.2vw,150px); font-weight:400; line-height:.88; letter-spacing:-.055em; }
+.inspire-copy h2 i { font-family:'Cormorant Garamond',Georgia,serif; }
+@media(max-width:700px) {
+  .inspire-copy { padding-left:5vw; padding-right:5vw; }
+  .inspire-0 { padding-top:14vh; }
+  .inspire-2 { padding-bottom:17vh; }
+  .inspire-copy h2 { max-width:92vw; font-size:11.5vw; line-height:.9; }
+}
+/* Page switch: a dark veil covers the old view while the new one mounts. */
+.route-veil { position:fixed; inset:0; z-index:500; background:#050304; opacity:0; pointer-events:none; transition:opacity .5s ease; }
+.route-veil.is-covering { opacity:1; pointer-events:auto; }
+/* Always-present navigation, bottom left (the sound switch sits bottom right). */
+.page-nav { position:fixed; left:22px; bottom:18px; z-index:80; display:flex; gap:8px; }
+.page-nav button { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 17px; border-radius:40px; font:500 13px/1 'Manrope',sans-serif; letter-spacing:.01em; color:#fff5e8; cursor:pointer; }
+.peel-instruction { bottom:calc(clamp(28px,5vh,70px) + 58px); }
+@media(max-width:700px) {
+  .page-nav { left:12px; bottom:10px; gap:6px; }
+  .page-nav button { width:44px; padding:0; justify-content:center; }
+  .page-nav span { display:none; }
+}
+/* Release page: the guitar levitates under the stage spotlight. */
+.release { position:fixed; inset:0; overflow:hidden; background:#050304; color:#fff5e8; }
+.release-bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:50% 50%; user-select:none; pointer-events:none; }
+.release-shadow { position:absolute; left:50%; top:84%; width:min(36vh,44vw); height:4.6vh; border-radius:50%; background:radial-gradient(closest-side,#000000e0,#0000); transform:translateX(-50%); pointer-events:none; }
+.release-stage { position:absolute; inset:0; cursor:grab; touch-action:none; }
+.release-stage:active { cursor:grabbing; }
+.release-stage.is-neck { cursor:zoom-in; }
+.release-stage.is-zoomed { cursor:pointer; }
+.release-stage canvas { display:block; width:100%; height:100%; }
+.release-hint { position:absolute; left:50%; bottom:28px; transform:translateX(-50%); margin:0; padding:11px 17px; border-radius:30px; font:500 13px/1.2 'Manrope',sans-serif; color:#fff5e8d9; background:#0a070899; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); white-space:nowrap; pointer-events:none; }
+.release-zoom-out { position:absolute; right:22px; top:20px; z-index:10; display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 17px; border-radius:40px; font:500 13px/1 'Manrope',sans-serif; color:#fff5e8; cursor:pointer; }
+.release-fact { position:absolute; top:30%; z-index:10; width:min(360px,32vw); padding:24px 26px; border-radius:22px; color:#fff5e8; visibility:hidden; opacity:0; pointer-events:none; }
+.release-fact.is-left { left:6vw; }
+.release-fact.is-right { right:6vw; }
+.release-fact .eyebrow { display:block; margin-bottom:12px; font:600 10px/1.2 'Manrope',sans-serif; letter-spacing:.2em; text-transform:uppercase; opacity:.7; }
+.release-fact p { margin:0; font:400 clamp(20px,1.7vw,27px)/1.3 'Cormorant Garamond',Georgia,serif; }
+@media(max-width:700px) {
+  .release-fact { top:auto; bottom:92px; width:auto; left:5vw!important; right:5vw!important; }
+  .release-hint { bottom:66px; white-space:normal; text-align:center; width:max-content; max-width:80vw; }
+}
+/* Dark "gorilla glass": the 21st GlassCard draws the pane; the panel is a slot. */
+.final-field .action-panel { background:none; border:0; padding:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; border-radius:20px; }
+.final-field .action-panel::before { display:none; }
+.glass-shell { height:100%; color:#fff5e8; }
+.final-field .platform-card a { position:relative; }
+.final-field .platform-card a:hover { background:rgba(255,255,255,.07); box-shadow:none; }
+.release-fact { padding:0; border-radius:22px; }
+/* Small controls share the same smoked glass, in plain CSS. */
+.page-nav button,.release-zoom-out { border:1px solid oklch(1 0 0 / .16); background:oklch(.16 .012 25 / .62); box-shadow:inset 0 1px 0 oklch(1 0 0 / .22),0 10px 26px -14px #000c; backdrop-filter:blur(16px) saturate(160%); -webkit-backdrop-filter:blur(16px) saturate(160%); transition:background .2s ease,transform .2s ease; }
+.page-nav button:hover,.release-zoom-out:hover { background:oklch(.24 .014 25 / .72); }
+.page-nav button:active,.release-zoom-out:active { transform:scale(.97); }
+.page-nav button:focus-visible,.release-zoom-out:focus-visible { outline:2px solid #fff5e8; outline-offset:3px; }
+/* A see-through pane needs the text itself to hold contrast. */
+.glass-shell a,.glass-shell h2,.release-fact p { text-shadow:0 1px 8px rgb(0 0 0 / .55); }
+/* Release page: zoom controls (bottom right) and a stage photo that moves with the camera. */
+.release-bg { transform-origin:50% 45%; will-change:transform; }
+.release-zoom { position:absolute; right:22px; bottom:18px; z-index:10; display:flex; flex-direction:column; gap:8px; }
+.release-zoom button { display:grid; place-items:center; width:44px; height:44px; border-radius:50%; color:#fff5e8; cursor:pointer; border:1px solid oklch(1 0 0 / .16); background:oklch(.16 .012 25 / .62); box-shadow:inset 0 1px 0 oklch(1 0 0 / .22),0 10px 26px -14px #000c; backdrop-filter:blur(16px) saturate(160%); -webkit-backdrop-filter:blur(16px) saturate(160%); transition:background .2s ease,transform .2s ease; }
+.release-zoom button:hover { background:oklch(.24 .014 25 / .72); }
+.release-zoom button:active { transform:scale(.95); }
+.release-zoom button:focus-visible { outline:2px solid #fff5e8; outline-offset:3px; }
+@media(max-width:700px) { .release-zoom { right:12px; bottom:10px; } }
+/* Peel hint: a see-through glass pane of its own, above the nav, never clickable. */
+.peel-hint { position:fixed; left:22px; bottom:70px; z-index:80; opacity:0; visibility:hidden; transition:opacity .35s ease,visibility 0s .35s; }
+.peel-hint.is-shown { opacity:1; visibility:visible; transition:opacity .35s ease; }
+.peel-hint,.peel-hint * { pointer-events:none!important; user-select:none; }
+.peel-hint span { display:flex; align-items:center; min-height:52px; padding:0 24px; font:500 15px/1 'Manrope',sans-serif; letter-spacing:.01em; color:#fff5e8; text-shadow:0 1px 8px rgb(0 0 0 / .55); white-space:nowrap; }
+@media(max-width:700px) { .peel-hint { left:12px; bottom:62px; } .peel-hint span { min-height:46px; padding:0 18px; font-size:13px; } }
+@media(max-width:1100px) { .release-hint { bottom:82px; } }
+/* Release page: six glass keycaps, one per string (Q thickest … Y thinnest). */
+.string-keys { position:absolute; left:50%; bottom:84px; z-index:10; display:flex; gap:6px; transform:translateX(-50%); }
+.string-keys button { position:relative; display:grid; place-items:center; width:46px; height:46px; border-radius:12px; color:#fff5e8; cursor:pointer; font:600 14px/1 'Manrope',sans-serif; border:1px solid oklch(1 0 0 / .18); background:oklch(.16 .012 25 / .5); box-shadow:inset 0 1px 0 oklch(1 0 0 / .22),0 10px 24px -14px #000c; backdrop-filter:blur(10px) saturate(150%); -webkit-backdrop-filter:blur(10px) saturate(150%); touch-action:manipulation; -webkit-user-select:none; user-select:none; transition:transform .12s ease,background .2s ease,box-shadow .2s ease; }
+.string-keys button span { transform:translateY(-4px); }
+.string-keys button i { position:absolute; left:22%; right:22%; bottom:9px; border-radius:2px; background:linear-gradient(90deg,#b9a57a,#f1e6c8,#b9a57a); opacity:.85; }
+.string-keys button:nth-child(n+4) i { background:linear-gradient(90deg,#9aa0a8,#eef1f4,#9aa0a8); }
+.string-keys button:hover { background:oklch(.24 .014 25 / .62); }
+.string-keys button.is-lit { transform:translateY(2px) scale(.96); background:oklch(.42 .03 60 / .55); box-shadow:inset 0 1px 0 oklch(1 0 0 / .35),0 0 22px oklch(.9 .08 80 / .45); }
+.string-keys button:focus-visible { outline:2px solid #fff5e8; outline-offset:3px; }
+@media(max-width:1100px) { .string-keys { bottom:136px; } }
+@media(max-width:700px) {
+  .release-zoom { display:none; }
+  .release-hint { bottom:64px; font-size:12px; padding:9px 14px; }
+  .string-keys { bottom:118px; gap:5px; }
+  .string-keys button { width:44px; height:44px; }
+  .release-fact { bottom:178px; }
+}
+/* Phone: cards end above the bottom navigation; each card is a full touch target. */
+@media(max-width:700px) {
+  .final-field { top:auto; bottom:64px; }
+  .final-field .platform-card a { min-height:46px; }
+}
