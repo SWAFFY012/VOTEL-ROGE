@@ -25,7 +25,10 @@ const facts = [
   'Двенадцать композиций — ровно столько струн у двух гитар, стоявших в студии.',
 ];
 
-type Fact = { id: number; text: string; side: 'left' | 'right' };
+// Facts land in the four corners around the guitar, on its diagonals.
+type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+const corners: Corner[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+type Fact = { id: number; text: string; corner: Corner };
 // How long a fact stays before it dissolves on its own.
 const factHold = 3200;
 type Pluck = { index: number; at: number; amplitude: number; start: number; released: boolean; hookX: number };
@@ -56,7 +59,7 @@ const beamFragment = `
 export default function ReleasePage() {
   const host = useRef<HTMLDivElement>(null), shadow = useRef<HTMLDivElement>(null), backdrop = useRef<HTMLImageElement>(null);
   const [zoom, setZoom] = useState({ free: false, strings: false });
-  // At most one fact per side; a newer one on a side replaces the older.
+  // At most one fact per corner; a newer one in a corner replaces the older.
   const [shownFacts, setShownFacts] = useState<Fact[]>([]);
   const controls = useRef<Controls>({ zoomOut: () => {}, zoomBy: () => {}, pluck: () => {} });
   const [litKey, setLitKey] = useState(-1);
@@ -227,7 +230,7 @@ export default function ReleasePage() {
       },
     });
 
-    let factIndex = Math.floor(Math.random() * facts.length), factCount = 0, lastSide: 'left' | 'right' = 'right';
+    let factIndex = Math.floor(Math.random() * facts.length), factCount = 0, lastCorner: Corner = 'bottom-right';
     const factTimers = new Set<number>();
     const sounds = createStringSounds(() => soundPreference.enabled);
     // Every pluck brings a fact, on the other side from the last one: played
@@ -239,9 +242,13 @@ export default function ReleasePage() {
       if (Math.abs(pluck.amplitude) < .008) pluck.amplitude = .012 * Math.sign(pluck.amplitude || 1);
       sounds.play(pluck.index, .55 + Math.abs(pluck.amplitude) / .03 * .45);
       factIndex = (factIndex + 1 + Math.floor(Math.random() * (facts.length - 1))) % facts.length;
-      lastSide = lastSide === 'left' ? 'right' : 'left';
-      const fact: Fact = { id: ++factCount, text: facts[factIndex], side: lastSide };
-      setShownFacts((shown) => [...shown.filter((f) => f.side !== fact.side), fact]);
+      // Any corner but the last one, at random.
+      const others = corners.filter((corner) => corner !== lastCorner);
+      lastCorner = others[Math.floor(Math.random() * others.length)];
+      const fact: Fact = { id: ++factCount, text: facts[factIndex], corner: lastCorner };
+      // A phone has room for one fact at a time.
+      const single = matchMedia('(max-width: 700px)').matches;
+      setShownFacts((shown) => [...(single ? [] : shown.filter((f) => f.corner !== fact.corner)), fact]);
       const timer = window.setTimeout(() => { factTimers.delete(timer); setShownFacts((shown) => shown.filter((f) => f.id !== fact.id)); }, factHold);
       factTimers.add(timer);
     };
@@ -470,19 +477,22 @@ export default function ReleasePage() {
       <button aria-label="Отдалить" onClick={() => { clickSound(); controls.current.zoomBy(1.6); }}><Minus size={18}/></button>
     </div>
     {zoomed && <button className="release-zoom-out" onClick={() => { clickSound(); controls.current.zoomOut(); }}><ZoomOut size={18}/><span>{zoom.strings ? 'К гитаре' : 'Отдалить'}</span></button>}
-    {/* Facts drift in from their own edge, word by word out of a blur
+    {/* Facts drift in from their own corner, word by word out of a blur
         (SoftBlurIn), and blur away faster than they came. */}
     <MotionConfig reducedMotion="user"><div role="status" aria-live="polite">
-      {(['left', 'right'] as const).map((side) => <div key={side} className={`release-fact is-${side}`}>
-        <AnimatePresence mode="popLayout">
-          {shownFacts.filter((fact) => fact.side === side).map((fact) => <motion.p key={fact.id} className="release-fact-item"
-            initial={{ x: side === 'left' ? -36 : 36, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { duration: .7, ease: [0.22, 1, 0.36, 1] } }}
-            exit={{ x: side === 'left' ? -18 : 18, opacity: 0, transition: { duration: .3, ease: [0.4, 0, 1, 1] } }}>
-            <span className="eyebrow">Факт о релизе · {String(fact.id).padStart(2, '0')}</span>
-            <SoftBlurIn className="fact-text" by="word" stagger={22} duration={.55} exitDuration={.22}>{fact.text}</SoftBlurIn>
-          </motion.p>)}
-        </AnimatePresence>
-      </div>)}
+      {corners.map((corner) => {
+        const left = corner.endsWith('left'), top = corner.startsWith('top');
+        return <div key={corner} className={`release-fact is-${corner}`}>
+          <AnimatePresence mode="popLayout">
+            {shownFacts.filter((fact) => fact.corner === corner).map((fact) => <motion.p key={fact.id} className="release-fact-item"
+              initial={{ x: left ? -36 : 36, y: top ? -24 : 24, opacity: 0 }} animate={{ x: 0, y: 0, opacity: 1, transition: { duration: .7, ease: [0.22, 1, 0.36, 1] } }}
+              exit={{ x: left ? -18 : 18, y: top ? -12 : 12, opacity: 0, transition: { duration: .3, ease: [0.4, 0, 1, 1] } }}>
+              <span className="eyebrow">Факт о релизе · {String(fact.id).padStart(2, '0')}</span>
+              <SoftBlurIn className="fact-text" by="word" stagger={22} duration={.55} exitDuration={.22}>{fact.text}</SoftBlurIn>
+            </motion.p>)}
+          </AnimatePresence>
+        </div>;
+      })}
     </div></MotionConfig>
   </main>;
 }

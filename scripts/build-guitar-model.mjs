@@ -5,9 +5,9 @@
 //     archive photo, 512×1024). The sharp front photo is registered to that
 //     texture (ORB + RANSAC affine), so a top vertex keeps its place on the
 //     guitar and only reads the sharp photo instead.
-//  2. Back: the archival rear photo (public/guitar-back.png) is a different
-//     print, so it is fitted by outline: the box of the body (below the neck)
-//     in the photo onto the box the model's rear faces use in its texture.
+//  2. Back: the rear photo (public/guitar-back-4k.webp) is projected flat onto
+//     the whole back (body, neck, headstock); the model's back silhouette is
+//     aligned to the guitar's silhouette in the photo (box, then ECC).
 //  3. Headstock face: projected straight from the archive photo
 //     (public/letov-guitars.png), box to box, like the old model.
 //  4. Strings: tailpiece, saddle, nut and tuner post of each string, read
@@ -19,7 +19,7 @@ import cvReady from '@techstark/opencv-js';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const cv = await cvReady;
-const glbPath = 'public/models/letov-guitar.glb', frontPath = 'public/guitar-front-4k.webp', backPath = 'public/guitar-back.png', archivePath = 'public/letov-guitars.png';
+const glbPath = 'public/models/letov-guitar.glb', frontPath = 'public/guitar-front-4k.webp', backPath = 'public/guitar-back-4k.webp', archivePath = 'public/letov-guitars.png';
 const debug = process.argv.includes('--debug') ? 'test-results' : '';
 
 // ── glTF access ──
@@ -61,10 +61,10 @@ const uvBox = (sign, [x0, y0, x1, y1]) => {
   }
   return box;
 };
-// Regions of the model texture: the left guitar's top, and the rear guitar.
-const frontRegion = [110, 540, 380, 975], backRegion = [270, 290, 430, 540];
-const frontBox = uvBox(1, frontRegion), backBox = uvBox(-1, backRegion);
-console.log('model texture boxes front', frontBox.map(Math.round), 'back', backBox.map(Math.round));
+// Region of the model texture with the left guitar's top.
+const frontRegion = [110, 540, 380, 975];
+const frontBox = uvBox(1, frontRegion);
+console.log('model texture box front', frontBox.map(Math.round));
 
 // ── 1. front photo → model texture (ORB + RANSAC affine) ──
 const gray = async (input, resize) => {
@@ -102,23 +102,134 @@ const front = Array.from(affine.data64F);
 console.log('front: matches', from.length / 2, 'inliers', kept, 'affine', front.map((v) => +v.toFixed(4)));
 if (kept < 12) throw new Error('front photo did not register to the model texture');
 
-// ── 2. rear photo → model texture, by the body's box ──
-const bodyBox = async (path, region) => {
-  const { data, info } = await sharp(path).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
-  const [x0, y0, x1, y1] = region ?? [0, 0, info.width, info.height];
-  const rows = [];
-  for (let y = y0; y < y1; y++) { let l = -1, r = -1; for (let x = x0; x < x1; x++) if (data[y * info.width + x] > 40) { if (l < 0) l = x; r = x; } rows.push([y, l, r]); }
-  const widest = Math.max(...rows.map(([, l, r]) => (l < 0 ? 0 : r - l)));
-  // The body is every row at least 45% as wide as the widest: the neck and
-  // headstock are much narrower.
-  const bodyRows = rows.filter(([, l, r]) => l >= 0 && r - l >= widest * .45);
-  return [Math.min(...bodyRows.map((r) => r[1])), bodyRows[0][0], Math.max(...bodyRows.map((r) => r[2])), bodyRows[bodyRows.length - 1][0]];
+// ── 2. rear photo → the model's whole back, by silhouette ──
+// Body, neck and headstock seen from behind are projected flat onto the rear
+// photo: (z, y) → photo px. The model's silhouette from behind (every face
+// of body, neck and headstock, flattened) is drawn as a mask and aligned to the
+// guitar's silhouette in the photo (box first, then ECC), so the outline of
+// the photo lies exactly on the model's edges.
+const neckMesh = gltf.meshes.findIndex((m) => gltf.materials[m.primitives[0].material].pbrMetallicRoughness?.baseColorTexture?.index === 1);
+const flatten = (meshes) => {
+  const triangles = [];
+  for (const mesh of meshes) {
+    const primitive = gltf.meshes[mesh].primitives[0], scene = toScene(mesh);
+    const positions = read(primitive.attributes.POSITION), indices = read(primitive.indices);
+    for (let t = 0; t < indices.length; t += 3) {
+      triangles.push([indices[t], indices[t + 1], indices[t + 2]].map((i) => { const [, y, z] = scene([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]); return [z, y]; }));
+    }
+  }
+  return triangles;
 };
-const rearBox = await bodyBox(backPath);
-// The model's rear faces: its texture box is the outline the mesh expects.
-const sx = (rearBox[2] - rearBox[0]) / (backBox[2] - backBox[0]), sy = (rearBox[3] - rearBox[1]) / (backBox[3] - backBox[1]);
-const back = [sx, 0, rearBox[0] - backBox[0] * sx, 0, sy, rearBox[1] - backBox[1] * sy];
-console.log('back: photo body box', rearBox, 'affine', back.map((v) => +v.toFixed(4)));
+const rearMeta = await sharp(backPath).metadata(), RW = rearMeta.width, RH = rearMeta.height;
+const rearGray = await gray(backPath);
+const photoMask = new cv.Mat();
+// The background is pure black (0); the black lacquer is not, so anything
+// above 2 is guitar. Closing fills the dark speckles in the lacquer; opening
+// then wipes thin things the model has no faces for (the strap, the tuner
+// buttons) before the outer contour is filled: with the strap still there it
+// would close a loop of background.
+cv.threshold(rearGray, photoMask, 2, 255, cv.THRESH_BINARY);
+cv.morphologyEx(photoMask, photoMask, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9)));
+cv.morphologyEx(photoMask, photoMask, cv.MORPH_OPEN, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(45, 45)));
+{
+  const contours = new cv.MatVector(), hierarchy = new cv.Mat();
+  cv.findContours(photoMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  let largest = 0; for (let i = 1; i < contours.size(); i++) if (cv.contourArea(contours.get(i)) > cv.contourArea(contours.get(largest))) largest = i;
+  photoMask.setTo(new cv.Scalar(0));
+  cv.drawContours(photoMask, contours, largest, new cv.Scalar(255), -1);
+}
+const rasterize = (triangles, m) => {
+  const mat = cv.Mat.zeros(RH, RW, cv.CV_8UC1);
+  for (const tri of triangles) {
+    const pts = cv.matFromArray(3, 1, cv.CV_32SC2, tri.flatMap(([z, y]) => [Math.round(m[0] * z + m[1] * y + m[2]), Math.round(m[3] * z + m[4] * y + m[5])]));
+    cv.fillConvexPoly(mat, pts, new cv.Scalar(255)); pts.delete();
+  }
+  return mat;
+};
+const below = (mat, row) => { if (row < mat.rows) mat.roi(new cv.Rect(0, row, mat.cols, mat.rows - row)).setTo(new cv.Scalar(0)); return mat; };
+// ECC on a blurred pyramid; the warp maps model-mask px → photo px, and is
+// composed with the starting placement into (z, y) → photo px.
+const align = (label, triangles, start, target, cut = RH) => {
+  const model = below(rasterize(triangles, start), cut), warp = cv.Mat.eye(2, 3, cv.CV_32F);
+  for (const level of [.25, .5, 1]) {
+    const w = Math.round(RW * level), h = Math.round(RH * level), tpl = new cv.Mat(), inp = new cv.Mat();
+    cv.resize(model, tpl, new cv.Size(w, h), 0, 0, cv.INTER_AREA);
+    cv.resize(target, inp, new cv.Size(w, h), 0, 0, cv.INTER_AREA);
+    const blur = new cv.Size(level === 1 ? 15 : 9, level === 1 ? 15 : 9);
+    cv.GaussianBlur(tpl, tpl, blur, 0); cv.GaussianBlur(inp, inp, blur, 0);
+    const scaled = new cv.Mat(2, 3, cv.CV_32F);
+    for (let i = 0; i < 6; i++) scaled.data32F[i] = warp.data32F[i] * (i % 3 === 2 ? level : 1);
+    try {
+      const score = cv.findTransformECC(tpl, inp, scaled, cv.MOTION_AFFINE, new cv.TermCriteria(cv.TermCriteria_COUNT + cv.TermCriteria_EPS, 300, 1e-7), new cv.Mat(), 5);
+      for (let i = 0; i < 6; i++) warp.data32F[i] = scaled.data32F[i] / (i % 3 === 2 ? level : 1);
+      console.log(label, 'ECC @', level, 'correlation', score.toFixed(4));
+    } catch (error) { console.log(label, 'ECC failed @', level, typeof error === 'number' ? cv.exceptionFromPtr(error).msg : error); }
+  }
+  const W = warp.data32F;
+  return [
+    W[0] * start[0] + W[1] * start[3], W[0] * start[1] + W[1] * start[4], W[0] * start[2] + W[1] * start[5] + W[2],
+    W[3] * start[0] + W[4] * start[3], W[3] * start[1] + W[4] * start[4], W[3] * start[2] + W[4] * start[5] + W[5],
+  ];
+};
+// Whole guitar first, placed by its box (from behind, +z is right, +y is up).
+const everything = flatten([bodyMesh, neckMesh, headMesh]);
+const maskBox = (mat) => { let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1; for (let y = 0; y < mat.rows; y++) for (let x = 0; x < mat.cols; x++) if (mat.data[y * mat.cols + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } return [x0, y0, x1, y1]; };
+const [px0, py0, px1, py1] = maskBox(photoMask);
+const zs = everything.flat().map((p) => p[0]), ys = everything.flat().map((p) => p[1]);
+const [zMin, zMax, yMin, yMax] = [Math.min(...zs), Math.max(...zs), Math.min(...ys), Math.max(...ys)];
+const kx = (px1 - px0) / (zMax - zMin), ky = (py1 - py0) / (yMax - yMin);
+const rear = align('rear', everything, [kx, 0, px0 - zMin * kx, 0, -ky, py0 + yMax * ky], photoMask);
+// The model's neck and headstock differ a little from the real ones, so each
+// gets its own box fit. In the photo, the neck runs up from the body until the
+// silhouette suddenly widens into the headstock: that row is the nut.
+const rowSpan = (row) => { let l = -1, r = -1; for (let x = 0; x < RW; x++) if (photoMask.data[row * RW + x]) { if (l < 0) l = x; r = x; } return [l, r]; };
+const flatBox = (meshes, from = -Infinity, to = Infinity) => {
+  const points = flatten(meshes).flat().filter(([, y]) => y >= from && y <= to);
+  return [Math.min(...points.map((p) => p[0])), Math.min(...points.map((p) => p[1])), Math.max(...points.map((p) => p[0])), Math.max(...points.map((p) => p[1]))];
+};
+const bodyTop = flatBox([bodyMesh])[3];
+const bodyRow = Math.round(rear[4] * bodyTop + rear[5]);
+const neckWidths = [];
+let nutRow = bodyRow;
+for (let row = bodyRow - 20; row > 0; row--) {
+  const [l, r] = rowSpan(row); if (l < 0) break;
+  const width = r - l, typical = neckWidths.length ? neckWidths.slice().sort((x, y) => x - y)[neckWidths.length >> 1] : width;
+  if (neckWidths.length > 40 && width > typical * 1.6) { nutRow = row; break; }
+  neckWidths.push(width);
+}
+const headTop = maskBox(photoMask)[1];
+// The neck mesh ends at the nut.
+const nutY = flatBox([neckMesh])[3];
+const boxFit = ([z0, y0, z1, y1], [x0, top, x1, bottom]) => { const sx = (x1 - x0) / (z1 - z0), sy = (bottom - top) / (y1 - y0); return [sx, 0, x0 - z0 * sx, 0, -sy, top + y1 * sy]; };
+const spanOf = (from, to) => { let l = Infinity, r = -Infinity; for (let row = from; row <= to; row++) { const [a, b] = rowSpan(row); if (a >= 0) { l = Math.min(l, a); r = Math.max(r, b); } } return [l, r]; };
+// Neck: from the body to the nut, as wide as the neck between them.
+const [nl, nr] = spanOf(nutRow + 12, bodyRow - 12);
+// (The neck mesh is a few long faces: its width comes from all of it.)
+const [nz0, , nz1] = flatBox([neckMesh]);
+const rearNeck = boxFit([nz0, bodyTop, nz1, nutY], [nl, nutRow, nr, bodyRow]);
+// Headstock: from the nut to its top.
+const [hl, hr] = spanOf(headTop, nutRow);
+const rearHead = boxFit(flatBox([headMesh], nutY), [hl, headTop, hr, nutRow]);
+console.log('photo rows: body', bodyRow, 'nut', nutRow, 'head top', headTop);
+console.log('rear: (z, y) → photo px', rear.map((v) => +v.toFixed(3)), 'neck', rearNeck.map((v) => +v.toFixed(3)), 'head', rearHead.map((v) => +v.toFixed(3)));
+
+// ── fretboard: its face box and the frets, for a sharp rosewood texture ──
+const neckPrimitive = gltf.meshes[neckMesh].primitives[0], neckScene = toScene(neckMesh);
+const neckPos = read(neckPrimitive.attributes.POSITION), neckNormal = read(neckPrimitive.attributes.NORMAL);
+const board = [Infinity, Infinity, -Infinity, -Infinity];
+for (let i = 0; i < neckPos.length / 3; i++) {
+  if (facing(neckMesh, neckNormal, i) < .5) continue;
+  const [, y, z] = neckScene([neckPos[i * 3], neckPos[i * 3 + 1], neckPos[i * 3 + 2]]);
+  board.splice(0, 4, Math.min(board[0], z), Math.min(board[1], y), Math.max(board[2], z), Math.max(board[3], y));
+}
+const fretMesh = gltf.meshes.findIndex((m, i) => { const a = gltf.accessors[m.primitives[0].attributes.POSITION], f = toScene(i); const lo = f(a.min)[1], hi = f(a.max)[1]; return gltf.materials[m.primitives[0].material].name === 'Material.006' && lo > board[1] - .1 && hi < board[3] + .1; });
+const fretScene = toScene(fretMesh), fretPos = read(gltf.meshes[fretMesh].primitives[0].attributes.POSITION);
+const fretYs = []; for (let i = 0; i < fretPos.length; i += 3) fretYs.push(fretScene([fretPos[i], fretPos[i + 1], fretPos[i + 2]])[1]);
+fretYs.sort((a, b) => b - a);
+const frets = [];
+for (const y of fretYs) { const last = frets[frets.length - 1]; if (last && last.max - y < .06) { last.min = y; last.sum += y; last.n++; } else frets.push({ max: y, min: y, sum: y, n: 1 }); }
+const fretboard = { box: board, frets: frets.map((f) => +(f.sum / f.n).toFixed(4)) };
+console.log('fretboard box', board.map((v) => +v.toFixed(3)), 'frets', fretboard.frets.length);
 
 // ── 3. headstock face → archive photo, box to box ──
 const head = gltf.meshes[headMesh].primitives[0];
@@ -164,7 +275,8 @@ const fit = {
   frame: { scale, centre: [xc, yc, zc] },
   atlas: { width: AW, height: AH },
   front: { affine: front, region: frontRegion, size: [frontMeta.width, frontMeta.height] },
-  back: { affine: back, region: backRegion, size: [(await sharp(backPath).metadata()).width, (await sharp(backPath).metadata()).height] },
+  rear: { body: rear, neck: rearNeck, head: rearHead, size: [RW, RH] },
+  fretboard,
   headstock: { ...headstock, size: [660, 777] },
   strings: strings.map((s) => ({ tail: site(s.tail), saddle: site(s.saddle), nut: site(s.nut), post: site(s.post) })),
 };
@@ -179,4 +291,10 @@ if (debug) {
   const blend = Buffer.alloc(AW * AH * 3);
   for (let i = 0; i < AW * AH; i++) { blend[i * 3] = warped.data[i]; blend[i * 3 + 1] = atlasGray.data[i]; blend[i * 3 + 2] = atlasGray.data[i]; }
   await sharp(blend, { raw: { width: AW, height: AH, channels: 3 } }).png().toFile(`${debug}/guitar-front-fit.png`);
+  // The model's silhouette (red) over the rear photo.
+  const placed = rasterize(flatten([bodyMesh]), rear), neck = rasterize(flatten([neckMesh]), rearNeck), head = rasterize(flatten([headMesh]), rearHead);
+  for (let i = 0; i < RW * RH; i++) placed.data[i] |= neck.data[i] | head.data[i];
+  const overlay = Buffer.alloc(RW * RH * 3);
+  for (let i = 0; i < RW * RH; i++) { overlay[i * 3] = placed.data[i] ? 255 : rearGray.data[i]; overlay[i * 3 + 1] = rearGray.data[i]; overlay[i * 3 + 2] = rearGray.data[i]; }
+  await sharp(overlay, { raw: { width: RW, height: RH, channels: 3 } }).png().toFile(`${debug}/guitar-rear-fit.png`);
 }

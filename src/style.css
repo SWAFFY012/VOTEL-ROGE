@@ -470,16 +470,19 @@ button:focus-visible,a:focus-visible { outline:2px solid #fff5e8; outline-offset
 @media (prefers-reduced-motion: reduce) { .peel-hint-text { animation:none; } }
 /* Release facts: plain text floating in at the sides, no plate. Each key press
    brings one in; a newer fact on the same side blurs the older one away. */
-.release-fact { position:absolute; top:24%; z-index:10; width:min(400px,30vw); color:#fff5e8; pointer-events:none; }
-.release-fact.is-left { left:5vw; text-align:left; }
-.release-fact.is-right { right:5vw; text-align:right; }
+.release-fact { position:absolute; z-index:10; width:min(400px,30vw); color:#fff5e8; pointer-events:none; }
+/* Four corners on the guitar's diagonals; the bottom ones stay clear of the keys. */
+.release-fact.is-top-left { top:9vh; left:5vw; text-align:left; }
+.release-fact.is-top-right { top:9vh; right:5vw; text-align:right; }
+.release-fact.is-bottom-left { bottom:calc(150px + 5vh); left:5vw; text-align:left; }
+.release-fact.is-bottom-right { bottom:calc(150px + 5vh); right:5vw; text-align:right; }
 .release-fact-item { margin:0; }
 .release-fact-item .eyebrow { display:block; margin-bottom:14px; font:600 10px/1.2 'Manrope',sans-serif; letter-spacing:.24em; text-transform:uppercase; color:#fff5e8b8; }
 .release-fact-item .fact-text { display:block; font:500 clamp(22px,2vw,33px)/1.22 'Cormorant Garamond',Georgia,serif; letter-spacing:-.005em;
   text-shadow:0 1px 3px rgb(0 0 0 / .7),0 4px 28px rgb(0 0 0 / .75); }
 @media(max-width:700px) {
-  .release-fact { width:auto; left:5vw; right:5vw; text-align:center; }
-  .release-fact.is-left { top:8vh; }
-  .release-fact.is-right { top:auto; bottom:190px; }
+  .release-fact { width:auto; left:5vw!important; right:5vw!important; text-align:center!important; }
+  .release-fact.is-top-left,.release-fact.is-top-right { top:8vh; }
+  .release-fact.is-bottom-left,.release-fact.is-bottom-right { bottom:190px; }
   .release-fact-item .fact-text { font-size:20px; }
 }
