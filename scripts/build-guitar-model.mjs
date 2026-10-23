@@ -8,6 +8,9 @@
 //  2. Back: the rear photo (public/guitar-back-4k.webp) is projected flat onto
 //     the whole back (body, neck, headstock); the model's back silhouette is
 //     aligned to the guitar's silhouette in the photo (box, then ECC).
+//  2b. Sides: the profile photo (public/guitar-side-4k.webp) is projected flat
+//     onto the rim and the sides of the neck and headstock, each part fitted
+//     box to box to its stretch of the silhouette.
 //  3. Headstock face: projected straight from the archive photo
 //     (public/letov-guitars.png), box to box, like the old model.
 //  4. Strings: tailpiece, saddle, nut and tuner post of each string, read
@@ -213,6 +216,54 @@ const rearHead = boxFit(flatBox([headMesh], nutY), [hl, headTop, hr, nutRow]);
 console.log('photo rows: body', bodyRow, 'nut', nutRow, 'head top', headTop);
 console.log('rear: (z, y) → photo px', rear.map((v) => +v.toFixed(3)), 'neck', rearNeck.map((v) => +v.toFixed(3)), 'head', rearHead.map((v) => +v.toFixed(3)));
 
+// ── 2b. side photo → the model's sides, in profile ──
+// Seen from the side the guitar is its depth (x, the top to the right) over
+// its length (y). Body, neck and headstock are each fitted box to box to their
+// part of the silhouette; hardware and strings (thin) are opened away, and the
+// strap hanging below the body is left out by row.
+const sidePath = 'public/guitar-side-4k.webp';
+const sideMeta = await sharp(sidePath).metadata(), SW = sideMeta.width, SH = sideMeta.height;
+const sideGray = await gray(sidePath), sideMask = new cv.Mat();
+cv.threshold(sideGray, sideMask, 2, 255, cv.THRESH_BINARY);
+cv.morphologyEx(sideMask, sideMask, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7)));
+cv.morphologyEx(sideMask, sideMask, cv.MORPH_OPEN, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(17, 17)));
+const sideRow = (row) => { let l = -1, r = -1; for (let x = 0; x < SW; x++) if (sideMask.data[row * SW + x]) { if (l < 0) l = x; r = x; } return [l, r]; };
+const median = (values) => { const sorted = values.slice().sort((a, b) => a - b); return sorted[sorted.length >> 1]; };
+const depthBox = (meshes) => {
+  const box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const mesh of meshes) {
+    const scene = toScene(mesh), positions = read(gltf.meshes[mesh].primitives[0].attributes.POSITION);
+    for (let i = 0; i < positions.length; i += 3) { const [x, y] = scene([positions[i], positions[i + 1], positions[i + 2]]); box.splice(0, 4, Math.min(box[0], x), Math.min(box[1], y), Math.max(box[2], x), Math.max(box[3], y)); }
+  }
+  return box;
+};
+// (x, y) → photo px, the top (+x) to the right, +y up.
+const sideFit = ([x0, y0, x1, y1], [left, top, right, bottom]) => { const sx = (right - left) / (x1 - x0), sy = (bottom - top) / (y1 - y0); return [sx, 0, left - x0 * sx, 0, -sy, top + y1 * sy]; };
+const rows = Array.from({ length: SH }, (_, row) => sideRow(row));
+const sideTop = rows.findIndex(([l]) => l >= 0);
+// Neck: the long stretch in the middle third, its back and fretboard edges.
+const middleRows = rows.slice(Math.round(SH * .25), Math.round(SH * .4)).filter(([l]) => l >= 0);
+const neckLeft = median(middleRows.map(([l]) => l)), neckRight = median(middleRows.map(([, r]) => r));
+// Nut: the first row from the top where the silhouette has narrowed to the neck.
+const sideNut = rows.findIndex(([l], row) => row > sideTop + 20 && l >= neckLeft - 6);
+// Body: from where the back steps out past the neck to the last row wider than
+// the strap below it.
+// (The neck heel curves out a little before it: the body steps out further.)
+const sideBodyTop = rows.findIndex(([l], row) => row > sideNut + 100 && l >= 0 && l < neckLeft - 45);
+let sideBodyBottom = sideBodyTop;
+for (let row = sideBodyTop; row < SH; row++) { const [l, r] = rows[row]; if (l < 0 || r - l < (neckRight - neckLeft) * 1.6) break; sideBodyBottom = row; }
+const bodyRows = rows.slice(sideBodyTop + 20, sideBodyBottom - 20);
+// The top's edge, not the knobs and pickups standing on it: a low percentile.
+const percentile = (values, q) => values.slice().sort((a, b) => a - b)[Math.round((values.length - 1) * q)];
+const bodyLeft = median(bodyRows.map(([l]) => l)), bodyRight = percentile(bodyRows.map(([, r]) => r), .05);
+const headRows = rows.slice(sideTop, sideNut);
+const sideBody = sideFit(depthBox([bodyMesh]), [bodyLeft, sideBodyTop, bodyRight, sideBodyBottom]);
+const [nx0, , nx1] = depthBox([neckMesh]);
+const sideNeck = sideFit([nx0, bodyTop, nx1, nutY], [neckLeft, sideNut, neckRight, sideBodyTop]);
+const [hx0, hy0, hx1, hy1] = depthBox([headMesh]);
+const sideHead = sideFit([hx0, hy0, hx1, hy1], [Math.min(...headRows.map(([l]) => l)), sideTop, Math.max(...headRows.map(([, r]) => r)), sideNut]);
+console.log('side rows: head', sideTop, 'nut', sideNut, 'body', sideBodyTop, '-', sideBodyBottom, 'columns neck', neckLeft, neckRight, 'body', bodyLeft, bodyRight);
+
 // ── fretboard: its face box and the frets, for a sharp rosewood texture ──
 const neckPrimitive = gltf.meshes[neckMesh].primitives[0], neckScene = toScene(neckMesh);
 const neckPos = read(neckPrimitive.attributes.POSITION), neckNormal = read(neckPrimitive.attributes.NORMAL);
@@ -276,6 +327,7 @@ const fit = {
   atlas: { width: AW, height: AH },
   front: { affine: front, region: frontRegion, size: [frontMeta.width, frontMeta.height] },
   rear: { body: rear, neck: rearNeck, head: rearHead, size: [RW, RH] },
+  side: { body: sideBody, neck: sideNeck, head: sideHead, size: [SW, SH] },
   fretboard,
   headstock: { ...headstock, size: [660, 777] },
   strings: strings.map((s) => ({ tail: site(s.tail), saddle: site(s.saddle), nut: site(s.nut), post: site(s.post) })),
@@ -297,4 +349,16 @@ if (debug) {
   const overlay = Buffer.alloc(RW * RH * 3);
   for (let i = 0; i < RW * RH; i++) { overlay[i * 3] = placed.data[i] ? 255 : rearGray.data[i]; overlay[i * 3 + 1] = rearGray.data[i]; overlay[i * 3 + 2] = rearGray.data[i]; }
   await sharp(overlay, { raw: { width: RW, height: RH, channels: 3 } }).png().toFile(`${debug}/guitar-rear-fit.png`);
+  // The model in profile (red) over the side photo.
+  const profile = cv.Mat.zeros(SH, SW, cv.CV_8UC1);
+  for (const [mesh, m] of [[bodyMesh, sideBody], [neckMesh, sideNeck], [headMesh, sideHead]]) {
+    const primitive = gltf.meshes[mesh].primitives[0], scene = toScene(mesh), positions = read(primitive.attributes.POSITION), indices = read(primitive.indices);
+    for (let t = 0; t < indices.length; t += 3) {
+      const pts = cv.matFromArray(3, 1, cv.CV_32SC2, [0, 1, 2].flatMap((k) => { const i = indices[t + k]; const [x, y] = scene([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]); return [Math.round(m[0] * x + m[2]), Math.round(m[4] * y + m[5])]; }));
+      cv.fillConvexPoly(profile, pts, new cv.Scalar(255)); pts.delete();
+    }
+  }
+  const sideOverlay = Buffer.alloc(SW * SH * 3);
+  for (let i = 0; i < SW * SH; i++) { sideOverlay[i * 3] = profile.data[i] ? 255 : sideGray.data[i]; sideOverlay[i * 3 + 1] = sideGray.data[i]; sideOverlay[i * 3 + 2] = sideGray.data[i]; }
+  await sharp(sideOverlay, { raw: { width: SW, height: SH, channels: 3 } }).png().toFile(`${debug}/guitar-side-fit.png`);
 }

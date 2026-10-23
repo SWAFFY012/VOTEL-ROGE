@@ -5,7 +5,8 @@ import fit from './guitarFit.json';
 // The Letov guitar as one reusable model: the Sketchfab model of his Musima
 // 1655 HV (Kirill_lewis, public/models/letov-guitar.glb) with the sharp front
 // photograph on its top, the rear photograph over its whole back (body, neck,
-// headstock), the archive photo on the headstock face and a rosewood
+// headstock), the profile photograph on its sides, the archive photo on the
+// headstock face and a rosewood
 // fretboard with dots between its frets; the strings are the site's own, laid
 // exactly where the model's strings run, so a page can bend them. Used by the
 // scroll scene on the landing page and by the release page.
@@ -76,8 +77,8 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
   const own = <T extends { dispose: () => void }>(item: T) => { owned.push(item); return item; };
   let disposed = false;
 
-  // Three photographs and the model: the front counts as loaded once all are in.
-  let pending = 4;
+  // Four photographs and the model: the front counts as loaded once all are in.
+  let pending = 5;
   const ready = () => { if (pending === 0 && !disposed) onFrontLoaded?.(); };
   const loader = new THREE.TextureLoader();
   const photo = (url: string) => {
@@ -92,6 +93,8 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
   // The arched back catches the overhead lamp head-on: a softer, older lacquer
   // keeps that from burning out to white.
   const rearMaterial = own(new THREE.MeshPhysicalMaterial({ map: photo('/guitar-back-4k.webp'), roughness: .66, clearcoat: .3, clearcoatRoughness: .4 }));
+  // The profile photo on the rim and the sides of neck and headstock.
+  const sideMaterial = own(new THREE.MeshPhysicalMaterial({ map: photo('/guitar-side-4k.webp'), roughness: .6, clearcoat: .4, clearcoatRoughness: .35 }));
   const headMaterial = lacquer(photo('/letov-guitars.png'));
   const rim = own(new THREE.MeshPhysicalMaterial({ color: 0x1c0a0b, roughness: .42, clearcoat: 1, clearcoatRoughness: .18 }));
   const fretboard = own(new THREE.MeshStandardMaterial({ map: own(rosewood(renderer)), roughness: .62 }));
@@ -150,21 +153,27 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
       if (material.name === 'Material.004') { mesh.material = own(new THREE.MeshStandardMaterial({ color: 0x0b0606, roughness: .9 })); return; }
       const body = material.name === 'Material.001', head = material.name === 'Material.002', neck = material.name === 'Material.005';
       if (!body && !head && !neck) return;
-      // Split the textured mesh by material: 0 the model's own (the body's rim),
-      // 1 the face (top photo, headstock face, fretboard), 2 the rear photo.
+      // Split the textured mesh by material: 0 the model's own (dark lacquer on
+      // the body), 1 the face (top photo, headstock face, fretboard), 2 the rear
+      // photo, 3 the profile photo.
       const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
       const position = geometry.attributes.position, normals = geometry.attributes.normal, uv = geometry.attributes.uv;
       normalMatrix.getNormalMatrix(mesh.matrixWorld);
       const tex = (i: number) => [uv.getX(i) * fit.atlas.width, uv.getY(i) * fit.atlas.height];
       const inside = (i: number, [x0, y0, x1, y1]: number[]) => { const [x, y] = tex(i); return x >= x0 && x <= x1 && y >= y0 && y <= y1; };
-      const facing = (i: number) => normal.fromBufferAttribute(normals, i).applyMatrix3(normalMatrix).normalize().x;
+      const facing = (i: number) => normal.fromBufferAttribute(normals, i).applyMatrix3(normalMatrix).normalize();
       const scene = (i: number) => point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
       // Flat projection of the rear photo from the model's (z, y), seen from behind.
       const project = (i: number, m: Affine, [width, height]: number[]) => { const p = scene(i); const [x, y] = apply(m, p.z, p.y); uv.setXY(i, x / width, y / height); };
       const rearFit = body ? fit.rear.body : neck ? fit.rear.neck : fit.rear.head;
-      const groups: number[][] = [[], [], []];
+      // And the profile photo from the model's (x, y), seen from the side.
+      const sideFit = body ? fit.side.body : neck ? fit.side.neck : fit.side.head;
+      const profile = (i: number) => { const p = scene(i); uv.setXY(i, (sideFit[0] * p.x + sideFit[2]) / fit.side.size[0], (sideFit[4] * p.y + sideFit[5]) / fit.side.size[1]); };
+      const groups: number[][] = [[], [], [], []];
       for (let t = 0; t < position.count; t += 3) {
-        const tri = [t, t + 1, t + 2], face = tri.reduce((sum, i) => sum + facing(i), 0) / 3;
+        const tri = [t, t + 1, t + 2];
+        let face = 0, sideways = 0;
+        tri.forEach((i) => { const n = facing(i); face += n.x / 3; sideways += Math.abs(n.z) / 3; });
         let target = 0;
         if (body && face > .5 && tri.every((i) => inside(i, fit.front.region))) {
           target = 1;
@@ -174,14 +183,20 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
           target = 1;
           const [z0, y0, z1, y1] = fit.headstock.scene, [px0, py0, px1, py1] = fit.headstock.photo;
           tri.forEach((i) => { const p = scene(i); uv.setXY(i, (px0 + (z1 - p.z) / (z1 - z0) * (px1 - px0)) / fit.headstock.size[0], (py0 + (y1 - p.y) / (y1 - y0) * (py1 - py0)) / fit.headstock.size[1]); });
+        } else if ((neck || head) && sideways > .5) {
+          // Sides of the neck and headstock: the profile photo.
+          target = 3; tri.forEach(profile);
         } else if (neck && face > .5) {
           // Fretboard: the rosewood texture, nut at its top.
           target = 1;
           const [z0, y0, z1, y1] = fit.fretboard.box;
           tri.forEach((i) => { const p = scene(i); uv.setXY(i, (z1 - p.z) / (z1 - z0), (y1 - p.y) / (y1 - y0)); });
         } else if (!body || face < -.2) {
-          // Back of the body, neck and headstock (and the neck's sides).
+          // Back of the body, neck and headstock.
           target = 2; tri.forEach((i) => project(i, rearFit, fit.rear.size));
+        } else if (face < .5) {
+          // The body's rim, with its binding: the profile photo.
+          target = 3; tri.forEach(profile);
         }
         groups[target].push(t);
       }
@@ -197,9 +212,9 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
       groups.forEach((list, index) => { grouped.addGroup(start, list.length * 3, index); start += list.length * 3; });
       if (geometry !== mesh.geometry) geometry.dispose();
       mesh.geometry = grouped;
-      // Body sides: the dark lacquered rim of the real guitar (the model texture
-      // only has the photo's background there).
-      mesh.material = [body ? rim : material, head ? headMaterial : neck ? fretboard : frontMaterial, rearMaterial];
+      // Leftovers on the body (inside the f-holes) stay dark lacquer: the model
+      // texture only has the photo's background there.
+      mesh.material = [body ? rim : material, head ? headMaterial : neck ? fretboard : frontMaterial, rearMaterial, sideMaterial];
     });
     model.position.set(-centre[0], -centre[1], -centre[2]);
     if (disposed) return;
