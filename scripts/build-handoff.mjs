@@ -4,7 +4,8 @@
 //  2. Cuts the floral layer straight out of the final film frame: its RGB is
 //     frame_0301 byte for byte, the opening is the grey face silhouette of that
 //     same frame (so every flower keeps its exact place, light and sharpness).
-//  3. Registers the final Letov photo (облога финальная летов фон.png) to the face
+//  3. Registers the Letov photo (летов фото слой 2.jpg) to the face, then matches
+//     its tones to the film's face so the hand-off shows no change in light
 //     (edge bands the tighter crop leaves open are filled from letov-new.png) of the final frame
 //     (ORB features + ECC refinement inside the opening) and writes it as the
 //     layer behind the flowers.
@@ -214,7 +215,7 @@ cv.erode(face, faceCore, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(
 // The final photo is a tighter crop: aligned to the film it leaves thin bands
 // at the frame edges. Those bands come from the earlier, wider print of the
 // same photograph, registered to the final one and tone-matched on the seam.
-const photo = await loadPhoto(join(root, 'облога финальная летов фон.png'));
+const photo = await loadPhoto(join(root, 'летов фото слой 2.jpg'));
 const transform = register('photo -> film', photo, filmGray, faceCore);
 const main = warpTo(photo.mat, transform, cv.INTER_CUBIC);
 const coverage = warpTo(new cv.Mat(photo.height, photo.width, cv.CV_8UC1, new cv.Scalar(255)), transform, cv.INTER_NEAREST, cv.BORDER_CONSTANT);
@@ -250,6 +251,41 @@ if (uncovered) {
   }
   console.log('filled edge px', uncovered);
 }
+// Look match: the film shows this photo softened and re-toned. Find the blur
+// that best reproduces the film's sharpness, then map tones per channel by
+// histogram inside the face opening (photo → film), and apply both to the
+// whole photo — so through the opening it is the film's exact face, and it
+// stays the same photo when later shown uncovered.
+{
+  const cdf = (values) => { const h = new Float64Array(256); values.forEach((v) => h[v]++); let sum = 0; for (let i = 0; i < 256; i++) { sum += h[i]; h[i] = sum / values.length; } return h; };
+  const toneMatch = (rgb) => [0, 1, 2].map((c) => {
+    const from = [], to = [];
+    for (let i = 0; i < count; i++) if (faceCore.data[i]) { from.push(rgb[i * 3 + c]); to.push(film[i * 3 + c]); }
+    const fa = cdf(from), fb = cdf(to), lut = new Uint8Array(256);
+    for (let v = 0, j = 0; v < 256; v++) { while (j < 255 && fb[j] < fa[v]) j++; lut[v] = j; }
+    const smooth = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) { let sum = 0, n = 0; for (let k = -3; k <= 3; k++) { const q = v + k; if (q >= 0 && q < 256) { sum += lut[q]; n++; } } smooth[v] = Math.round(sum / n); }
+    return smooth;
+  });
+  const apply = (rgb, luts) => { const o = Buffer.from(rgb); for (let i = 0; i < count; i++) for (let c = 0; c < 3; c++) o[i * 3 + c] = luts[c][rgb[i * 3 + c]]; return o; };
+  const error = (rgb) => { let d = 0, n = 0; for (let i = 0; i < count; i++) if (faceCore.data[i]) { for (let c = 0; c < 3; c++) d += Math.abs(rgb[i * 3 + c] - film[i * 3 + c]); n += 3; } return d / n; };
+  // Sharpness = mean distance of a pixel from its 3×3 neighbourhood (green
+  // channel) inside the opening; grain is random, so match its strength, not
+  // its pixels.
+  const detail = (rgb) => { let d = 0, n = 0; for (let i = 0; i < count; i++) if (faceCore.data[i]) { const x = i % W; if (x < 1 || x > W - 2) continue; let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m += rgb[(i + dy * W + dx) * 3 + 1]; d += Math.abs(rgb[i * 3 + 1] - m / 9); n++; } return d / n; };
+  const want = detail(film);
+  let best = { sigma: 0, rgb: apply(alignedRGB, toneMatch(alignedRGB)) };
+  best.gap = Math.abs(detail(best.rgb) - want);
+  for (const sigma of [.4, .6, .8, 1, 1.25, 1.5, 1.8, 2.2]) {
+    const soft = await sharp(alignedRGB, { raw: { width: W, height: H, channels: 3 } }).blur(sigma).raw().toBuffer();
+    const rgb = apply(soft, toneMatch(soft)), gap = Math.abs(detail(rgb) - want);
+    if (gap < best.gap) best = { sigma, rgb, gap };
+  }
+  best.err = error(best.rgb);
+  console.log('film detail', want.toFixed(2), 'photo detail gap', best.gap.toFixed(2));
+  best.rgb.copy(alignedRGB);
+  console.log('look match: blur sigma', best.sigma, 'mean |photo − film| in the opening', best.err.toFixed(2));
+}
 await sharp(alignedRGB, { raw: { width: W, height: H, channels: 3 } }).webp({ lossless: true }).toFile(join(out, 'letov-aligned.webp'));
 
 // 4. The photo as seen through the opening, for the in-film cross-fade.
@@ -264,6 +300,16 @@ for (let i = 0; i < count; i++) {
   if (x < left + pad || x >= W - right - pad || y < top + pad || y >= H - bottom - pad) hole[i * 4 + 3] = 0;
 }
 await sharp(hole, { raw: { width: W, height: H, channels: 4 } }).webp({ lossless: true }).toFile(join(out, 'letov-hole.webp'));
+// The film's own face from its last frame, cut to the same opening. It sits
+// between the photo and the flowers, so the hand-off from the film changes no
+// pixel; the photo takes over only as the sheet is peeled.
+const filmFace = Buffer.alloc(count * 4);
+for (let i = 0; i < count; i++) {
+  for (let c = 0; c < 3; c++) filmFace[i * 4 + c] = film[i * 3 + c];
+  // Opaque under the whole soft edge too, or the photo would leak through it.
+  filmFace[i * 4 + 3] = hole[i * 4 + 3] > 0 ? 255 : 0;
+}
+await sharp(filmFace, { raw: { width: W, height: H, channels: 4 } }).webp({ lossless: true }).toFile(join(out, 'film-face.webp'));
 
 console.log('matte', { left, right, top, bottom }, 'opening px', face.data.reduce((s, v) => s + (v ? 1 : 0), 0));
 

@@ -8,7 +8,7 @@ export default function LoadingIntro({ onComplete }: { onComplete: () => void })
     const previousOverflow=document.body.style.overflow;
     document.body.style.overflow='hidden';
     let disposed=false,ready=0,frame=0,exit:gsap.core.Timeline|undefined;
-    const images=['/cover.jpg','/guitar-atlas-restored.png','/guitar-back.png','/guitar-side.png'];
+    const images=['/cover.jpg','/guitar-atlas-clean.png','/guitar-back.png','/guitar-side.png'];
     images.forEach(src=>{const img=new Image();img.onload=img.onerror=()=>{ready++;};img.src=src;});
     document.fonts.ready.finally(()=>{ready++;});
     const started=performance.now();

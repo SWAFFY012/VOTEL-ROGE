@@ -13,6 +13,8 @@ import CursorRing from '@/components/CursorRing';
 import InteractivePeelReveal from '@/components/InteractivePeelReveal';
 import MeridianTransition from '@/components/MeridianTransition';
 import EyeBlink, { type BlinkControl } from '@/components/EyeBlink';
+import SoftBlurIn from '@/components/ui/soft-blur-in';
+import { AnimatePresence } from 'motion/react';
 import { restart, soundPreference, startsAtFinal, travel } from '@/lib/navigation';
 import { createScrollAudio, type ScrollAudio } from '@/lib/scrollAudio';
 
@@ -54,32 +56,40 @@ export default function App() {
     return()=>{animation.kill();};
   },[note,docked,reduced]);
   const finishLoading=useCallback(()=>{
-    window.scrollTo({top:0,left:0,behavior:'instant'});
+    // If the film already ended behind the loader, land on the flower sheet.
+    window.scrollTo({top:heroReadyRef.current?2*innerHeight:0,left:0,behavior:'instant'});
     setLoaded(true);
     requestAnimationFrame(()=>ScrollTrigger.refresh());
   },[]);
   const changePeel=useCallback((progress:number)=>{peelProgressRef.current=progress;setPeelProgress(progress);},[]);
   useEffect(()=>{
+    // The hero film plays through on its own (no scroll scrubbing); its last
+    // frame hands over to the peelable flower sheet.
     const film=video.current!;
-    const colorTime=4.95;
+    const soundFrom=4.95;
     const finish=()=>{
       if(heroReadyRef.current)return;
       film.pause();
       heroReadyRef.current=true;
       setHeroReady(true);
     };
-    const handoff=()=>{if(film.currentTime>=colorTime)finish();};
+    const atEnd=(time:number)=>Number.isFinite(film.duration)&&time>=film.duration-.06;
+    // The cut / paper sound clip covers 4.95 s to the end; keep it in step.
+    const follow=(time:number)=>{if(time>=soundFrom)filmSound.current?.seek(time-soundFrom);};
+    const handoff=()=>{follow(film.currentTime);if(atEnd(film.currentTime))finish();};
     let callback=0;
     const nextFrame:VideoFrameRequestCallback=(_now,metadata)=>{
-      if(metadata.mediaTime>=colorTime-.001)finish();
+      follow(metadata.mediaTime);
+      if(atEnd(metadata.mediaTime))finish();
       else callback=film.requestVideoFrameCallback(nextFrame);
     };
+    film.addEventListener('ended',finish);
     if(matchMedia('(prefers-reduced-motion: reduce)').matches)finish();
     else if(typeof film.requestVideoFrameCallback==='function')callback=film.requestVideoFrameCallback(nextFrame);
     else film.addEventListener('timeupdate',handoff);
     film.addEventListener('error',finish);
-    const first=new Image();first.src='/peel/frames/frame_0100.webp';
-    return()=>{if(callback)film.cancelVideoFrameCallback(callback);film.removeEventListener('timeupdate',handoff);film.removeEventListener('error',finish);};
+    const last=new Image();last.src='/peel/frames/frame_0301.webp';
+    return()=>{if(callback)film.cancelVideoFrameCallback(callback);film.removeEventListener('timeupdate',handoff);film.removeEventListener('error',finish);film.removeEventListener('ended',finish);};
   },[]);
   useEffect(()=>{
     let lastFrame=100;
@@ -91,7 +101,7 @@ export default function App() {
       image.src=`/peel/frames/frame_${String(number).padStart(4,'0')}.webp`;
       image.decode().then(()=>{if(requestedFrame===number&&frameImage.current)frameImage.current.src=image.src;}).catch(()=>{});
     };
-    for(let i=100;i<=110;i++)prepare(i);
+    for(let i=296;i<=301;i++)prepare(i);
     let lastVisible=false,previousY=0;
     // Scrolling back re-sticks the sheet: the peel plays in reverse along the
     // same crease instead of the flowers popping back in one frame.
@@ -100,6 +110,9 @@ export default function App() {
       if(!heroReadyRef.current){if(scrollY>0)window.scrollTo(0,0);return;}
       const section=2*innerHeight;
       if(peelProgressRef.current<.995&&scrollY>section){window.scrollTo(0,section);}
+      // The film section is no longer scrolled: after the film the page sits on
+      // the flower sheet, and nothing above it can be reached.
+      if(!resticking&&scrollY<section-1){window.scrollTo(0,section);}
       if(!resticking&&scrollY<previousY&&previousY>=section-2&&scrollY<=section+80&&peelProgressRef.current>=.995){
         resticking=true;window.scrollTo(0,section);
         restick.value=peelProgressRef.current;
@@ -110,12 +123,10 @@ export default function App() {
       // The last frame is reached exactly where the peel sheet takes over.
       const end=section-8;
       const frame=100+Math.min(201,Math.floor(Math.min(scrollY,end)/end*201));
-      // Frames were taken at 20 fps from 4.95 s on; the clip starts at 4.95 s.
-      filmSound.current?.seek(Math.min(scrollY,end)/end*201/20);
       requestedFrame=frame;
       // Over the static closing frames the photo settles into the opening, so
       // frame 301 already equals the two-layer sheet and the switch is invisible.
-      if(faceSwap.current){const t=Math.max(0,Math.min(1,(frame-281)/19));faceSwap.current.style.opacity=String(t*t*(3-2*t));}
+      if(faceSwap.current)faceSwap.current.style.opacity='0';
       if(frame!==lastFrame&&frameImage.current){
         lastFrame=frame;
         const ready=cache.get(frame);
@@ -288,7 +299,10 @@ export default function App() {
         const story=p*1050/800;
         const guitarP=sceneActive?gsap.utils.clamp(.205,1,.205+story*.795):0;
         motion.current.progress=guitarP;
-        transitionMotion.current.progress=gsap.utils.clamp(0,1,(guitarP-.60)/.15);
+        // Letov photo → child cover runs along the whole guitar flight: the first
+        // phrase gets a moment to appear (.235), then the covers start changing
+        // as the guitar comes up (.25) and finish as it leaves the top (.76).
+        transitionMotion.current.progress=gsap.utils.clamp(0,1,(guitarP-.25)/.51);
 
         if(finale==='idle'){
           // Phrases start with the guitar's first appearance from below (.235),
@@ -321,7 +335,7 @@ export default function App() {
     <svg width="0" height="0" aria-hidden="true" style={{position:'absolute'}}><defs>{'VOTEL-ROGE'.split('').map((_,index)=><filter key={index} id={'glyph-'+index} x="-20%" y="-20%" width="140%" height="140%"><feMorphology className="glyph-erosion" operator="erode" radius="3"/></filter>)}</defs></svg>
     <div className="scroll-track" aria-hidden="true"/>
     <div className="stage">
-      <div className="backdrop" aria-hidden="true"><img src="/cover.jpg" alt=""/><video className="intro-film" autoPlay ref={video} src="/intro.mp4" muted playsInline preload="auto" onError={e=>{e.currentTarget.style.display='none';}}/><img ref={frameImage} className={`hero-scroll-frame${heroReady?' is-ready':''}`} src="/peel/frames/frame_0100.webp" alt=""/><img ref={faceSwap} className={`hero-face-swap${heroReady?' is-ready':''}`} src="/peel/letov-hole.webp?v=6" alt=""/></div>
+      <div className="backdrop" aria-hidden="true"><img src="/cover.jpg" alt=""/><video className="intro-film" autoPlay ref={video} src="/intro.mp4" muted playsInline preload="auto" onError={e=>{e.currentTarget.style.display='none';}}/><img ref={frameImage} className={`hero-scroll-frame${heroReady?' is-ready':''}`} src="/peel/frames/frame_0100.webp" alt=""/><img ref={faceSwap} className={`hero-face-swap${heroReady?' is-ready':''}`} src="/peel/letov-hole.webp?v=7" alt=""/></div>
       <MeridianTransition motion={transitionMotion}/>
       <div className="final-cover" aria-hidden="true"><img src="/peel/cover-flowers.jpg" alt=""/></div>
       <InteractivePeelReveal active={peelVisible} progress={peelProgress} onProgressChange={changePeel}/>
@@ -349,7 +363,9 @@ export default function App() {
     <audio ref={hover} src="/audio/card-hover.mp3" preload="auto" hidden/>
     <audio ref={click} src="/audio/card-click.mp3" preload="auto" hidden/>
     {needsInteraction&&soundEnabled&&<div className="sound-hint" role="status">Нажмите, чтобы включить музыку</div>}
-    <div className={`peel-hint${peelVisible&&peelProgress<.995?' is-shown':''}`} aria-hidden="true"><GlassCard {...darkGlass} radius={30} padding={0} interactive={false}><span>Потяните за любой край или угол</span></GlassCard></div>
+    {/* Calligraphic hint in the middle of the sheet, no plate; it leaves as
+        soon as the sheet starts to come off. */}
+    <div className="peel-hint" aria-hidden="true"><AnimatePresence>{loaded&&peelVisible&&peelProgress<.01&&<p key="hint" className="peel-hint-text"><SoftBlurIn delay={700} stagger={45} duration={1.3} exitDuration={.45}>Потяните за угол</SoftBlurIn></p>}</AnimatePresence></div>
     {loaded&&<div className="page-nav" role="group" aria-label="Навигация"><button onClick={()=>{playEffect('click');restart(180);}}><RotateCcw size={17}/><span>В начало</span></button><button onClick={()=>{playEffect('click');controls.current?.skip();}}><FastForward size={18}/><span>Пропустить анимации</span></button></div>}
     <div className="sound-toggle" data-enabled={soundEnabled} role="group" aria-label="Звук"><button aria-label="Включить звук" aria-pressed={soundEnabled} onClick={()=>setSoundEnabled(true)}><Volume2 size={19}/></button><button aria-label="Выключить звук" aria-pressed={!soundEnabled} onClick={()=>setSoundEnabled(false)}><VolumeX size={19}/></button></div>
     {!loaded&&<LoadingIntro onComplete={finishLoading}/>}

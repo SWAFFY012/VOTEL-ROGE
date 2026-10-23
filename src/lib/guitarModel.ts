@@ -127,7 +127,6 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
   const blackPlastic = new THREE.MeshStandardMaterial({ color: 0x0c0b0b, roughness: .5 });
   const bone = new THREE.MeshStandardMaterial({ color: 0xece4d0, roughness: .45 });
   const rosewood = new THREE.MeshStandardMaterial({ color: 0x2b1810, roughness: .55 });
-  const pearl = new THREE.MeshPhysicalMaterial({ color: 0xece6d8, roughness: .3, clearcoat: 1, clearcoatRoughness: .2 });
 
   // Fretboard: a raised slab carrying the photographed rosewood and dots.
   const nutY = 143.5, boardEndY = 476;
@@ -208,14 +207,49 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     return { mesh, length, index };
   });
 
-  // Tuners: chrome posts on the face, pearl buttons out at the sides.
-  posts.forEach(([x, y]) => {
-    const post = place(new THREE.CylinderGeometry(.017, .02, .05, 16), chrome, x, y, face + .025);
-    post.rotation.x = Math.PI / 2;
+  // Tuners, 3 + 3 as on the photograph: on the face a nickel bushing and a
+  // slotted post with the string wound round it; behind the headstock a gear
+  // cover, its shaft running out past the edge to an oval pearloid button.
+  // The buttons are mismatched, as on Letov's guitar: long ovals and round ones.
+  const marble = document.createElement('canvas'); marble.width = marble.height = 128;
+  const ink = marble.getContext('2d')!;
+  ink.fillStyle = '#cfd2c4'; ink.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 90; i++) {
+    const tone = 150 + Math.random() * 90;
+    ink.fillStyle = `rgba(${tone * .92},${tone},${tone * .88},${.15 + Math.random() * .3})`;
+    ink.beginPath(); ink.ellipse(Math.random() * 128, Math.random() * 128, 3 + Math.random() * 16, 2 + Math.random() * 6, Math.random() * Math.PI, 0, Math.PI * 2); ink.fill();
+  }
+  const marbleTexture = new THREE.CanvasTexture(marble); marbleTexture.colorSpace = THREE.SRGBColorSpace;
+  const pearloid = new THREE.MeshPhysicalMaterial({ map: marbleTexture, roughness: .32, clearcoat: 1, clearcoatRoughness: .12, sheen: .6, sheenColor: new THREE.Color(0xe9f0e2) });
+  const agedNickel = new THREE.MeshStandardMaterial({ color: 0xc4b48f, roughness: .34, metalness: .88, envMapIntensity: 1.5 });
+  // Long ovals (top left, top and middle right), the rest round.
+  const buttons = [[.052, .03], [.04, .034], [.04, .034], [.06, .031], [.058, .031], [.04, .034]];
+  posts.forEach(([x, y], index) => {
     const side = x < 156 ? -1 : 1;
-    const shaft = place(new THREE.CylinderGeometry(.009, .009, .09, 10), chrome, x + side * 20, y, 0);
+    const bushing = place(new THREE.CylinderGeometry(.021, .023, .01, 24), agedNickel, x, y, face + .005);
+    bushing.rotation.x = Math.PI / 2;
+    const post = place(new THREE.CylinderGeometry(.0105, .0115, .05, 18), agedNickel, x, y, face + .033);
+    post.rotation.x = Math.PI / 2;
+    // Slot across the top of the post.
+    place(new THREE.BoxGeometry(.022, .004, .006), blackPlastic, x, y, face + .057);
+    // String wound three times round the post.
+    for (let turn = 0; turn < 3; turn++) {
+      const coil = place(new THREE.TorusGeometry(.0128, radii[index] * .9, 6, 22), metal, x, y, stringZ - .002 - turn * radii[index] * 1.9);
+      coil.rotation.z = turn * .7;
+    }
+    // Gear cover on the back of the headstock.
+    place(new RoundedBoxGeometry(.068, .078, .028, 3, .012), agedNickel, x - side * .5, y, -.137);
+    const reach = side < 0 ? 130 : 180;
+    const stem = (reach - x) / 100;
+    const shaft = place(new THREE.CylinderGeometry(.0075, .0075, Math.abs(stem), 12), agedNickel, x + (reach - x) / 2, y, -.14);
     shaft.rotation.z = Math.PI / 2;
-    place(new THREE.BoxGeometry(.075, .05, .02), pearl, x + side * 27.5, y, 0);
+    const collar = place(new THREE.CylinderGeometry(.011, .011, .012, 16), agedNickel, reach - side * 2.6, y, -.14);
+    collar.rotation.z = Math.PI / 2;
+    // Oval paddle: broad face towards the player, thin edge on.
+    const [tall, wide] = buttons[index];
+    const button = place(new THREE.SphereGeometry(1, 28, 18), pearloid, reach + side * wide * 90, y, -.14);
+    button.scale.set(wide, tall, .012);
+    button.rotation.z = side * (index % 3 === 0 ? .12 : -.05);
   });
 
   // Pickups: chrome surrounds, black inserts, one pole piece under each string.
@@ -247,8 +281,8 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     metal,
     dispose: () => {
       texture.dispose();sideTexture.dispose();rearTexture.dispose();backGeometry.dispose();bodyGeometry.dispose();faceGeometry.dispose();
-      hardware.forEach(g=>g.dispose()); windings.forEach(t=>t.dispose()); shadeTexture.dispose();
-      [sideMaterial,frontMaterial,backMaterial,metal,chrome,blackPlastic,bone,rosewood,pearl,shadow,...materials].forEach(m=>m.dispose());
+      hardware.forEach(g=>g.dispose()); windings.forEach(t=>t.dispose()); shadeTexture.dispose(); marbleTexture.dispose();
+      [sideMaterial,frontMaterial,backMaterial,metal,chrome,blackPlastic,bone,rosewood,pearloid,agedNickel,shadow,...materials].forEach(m=>m.dispose());
     },
   };
 }

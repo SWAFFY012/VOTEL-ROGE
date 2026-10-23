@@ -2,11 +2,18 @@
 // the 3D strings are the only ones seen up close. Frets run across the neck
 // and inlay dots are wider than a string, so a narrow horizontal median keeps
 // them while the thin lengthwise string lines disappear.
-// Run: node scripts/clean-fretboard.mjs  →  public/guitar-atlas-clean.png
+// The front is the original photograph (no AI-redrawn stickers): any copy of
+// the 660×777 picture with the same framing works, a larger scan or a faithful
+// 4K upscale included. Small sources are resampled (Lanczos, light sharpening)
+// to at least twice the reference size, so the texture never shows blocks.
+// Run: node scripts/clean-fretboard.mjs [source]  →  public/guitar-atlas-clean.png
 import sharp from 'sharp';
 
-const source = 'public/guitar-atlas-restored.png';
-const { data, info } = await sharp(source).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+const source = process.argv[2] ?? 'public/letov-guitars.png';
+const meta = await sharp(source).metadata();
+const targetWidth = Math.max(meta.width, 1320);
+const { data, info } = await sharp(source).resize(targetWidth, Math.round(targetWidth * 777 / 660), { kernel: 'lanczos3', fit: 'fill' })
+  .sharpen(meta.width < 1320 ? { sigma: .8, m1: .6, m2: 1.2 } : undefined).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 const { width, height } = info;
 const sx = width / 660, sy = height / 777;
 // Fretboard in reference pixels (same numbers as src/lib/guitarModel.ts).

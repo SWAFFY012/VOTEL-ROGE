@@ -15,7 +15,7 @@ export default function MeridianTransition({motion}:{motion:React.RefObject<{pro
     renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
     container.appendChild(renderer.domElement);
     const loader=new THREE.TextureLoader();
-    const a=loader.load('/peel/letov-aligned.webp?v=6'),b=loader.load('/peel/cover-final.png'),displacement=loader.load('/peel/disp1.jpg');
+    const a=loader.load('/peel/letov-aligned.webp?v=7'),b=loader.load('/peel/cover-final.png'),displacement=loader.load('/peel/disp1.jpg');
     // intensity 1.5 pushes samples past the image edge; mirror instead of
     // stretching the border pixels into streaks (the shader math is untouched).
     for(const texture of [a,b]){texture.wrapS=texture.wrapT=THREE.MirroredRepeatWrapping;}

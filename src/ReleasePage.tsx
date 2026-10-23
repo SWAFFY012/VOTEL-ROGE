@@ -5,8 +5,8 @@ import gsap from 'gsap';
 import { ArrowLeft, Minus, Plus, RotateCcw, ZoomOut } from 'lucide-react';
 import { createGuitar } from '@/lib/guitarModel';
 import { clickSound, restart, soundPreference, travel } from '@/lib/navigation';
-import GlassCard from '@/components/ui/glass-card';
-import { darkGlass } from '@/lib/glass';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
+import SoftBlurIn from '@/components/ui/soft-blur-in';
 import { createStringSounds } from '@/lib/stringSounds';
 
 // Physical key positions (layout-independent): thickest string on Q.
@@ -25,6 +25,9 @@ const facts = [
   'Двенадцать композиций — ровно столько струн у двух гитар, стоявших в студии.',
 ];
 
+type Fact = { id: number; text: string; side: 'left' | 'right' };
+// How long a fact stays before it dissolves on its own.
+const factHold = 3200;
 type Pluck = { index: number; at: number; amplitude: number; start: number; released: boolean; hookX: number };
 type Controls = { zoomOut: () => void; zoomBy: (factor: number) => void; pluck: (index: number) => void };
 
@@ -52,9 +55,9 @@ const beamFragment = `
 
 export default function ReleasePage() {
   const host = useRef<HTMLDivElement>(null), shadow = useRef<HTMLDivElement>(null), backdrop = useRef<HTMLImageElement>(null);
-  const factBox = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState({ free: false, strings: false });
-  const [fact, setFact] = useState<{ text: string; side: 'left' | 'right'; number: number } | null>(null);
+  // At most one fact per side; a newer one on a side replaces the older.
+  const [shownFacts, setShownFacts] = useState<Fact[]>([]);
   const controls = useRef<Controls>({ zoomOut: () => {}, zoomBy: () => {}, pluck: () => {} });
   const [litKey, setLitKey] = useState(-1);
   // Touch screens have no wheel or Q–Y keys: say pinch and the keycaps instead.
@@ -171,9 +174,11 @@ export default function ReleasePage() {
       visibleHeight = 2 * tanHalf * home.z;
       // Fit the guitar between a small top margin and the controls at the
       // bottom (keycaps, hint, navigation), whose height depends on the width.
-      const reserved = w <= 700 ? 176 : w <= 1100 ? 196 : 146, top = h * .06;
-      const room = Math.max(h * .4, h - reserved - top);
-      scale = Math.min(.6 * visibleHeight / 6.83, room / h * visibleHeight / 6.83, .62 * visibleHeight * camera.aspect / 2.21);
+      // The guitar is the subject here: it fills all the height the controls
+      // leave free (up to 90% of the screen), and most of a narrow screen's width.
+      const reserved = w <= 700 ? 176 : w <= 1100 ? 196 : 146, top = h * .03;
+      const room = Math.max(h * .5, h - reserved - top);
+      scale = Math.min(.9 * visibleHeight / 6.83, room / h * visibleHeight / 6.83, .86 * visibleHeight * camera.aspect / 2.21);
       baseY = (.5 - (top + room / 2) / h) * visibleHeight;
       if (shadow.current) shadow.current.style.top = `${((.5 - (baseY - 3.45 * scale) / visibleHeight) * 100 + 1.2).toFixed(2)}%`;
       beam.position.set(0, baseY + visibleHeight * .5 + .6 - beamHeight / 2, -.2);
@@ -207,7 +212,7 @@ export default function ReleasePage() {
       gsap.to(view, { zoom: 1, duration: reduced ? 0 : 1.5, ease: 'power3.inOut', overwrite: true });
     };
     const leaveStrings = () => {
-      setFact(null);
+      setShownFacts([]);
       stringMode = false; report();
       gsap.to(view, { zoom: 0, duration: reduced ? 0 : 1.2, ease: 'power3.inOut', overwrite: true });
     };
@@ -222,20 +227,23 @@ export default function ReleasePage() {
       },
     });
 
-    let factIndex = Math.floor(Math.random() * facts.length), factCount = 0, lastSide: 'left' | 'right' = 'right', lastFact = -1e9;
+    let factIndex = Math.floor(Math.random() * facts.length), factCount = 0, lastSide: 'left' | 'right' = 'right';
+    const factTimers = new Set<number>();
     const sounds = createStringSounds(() => soundPreference.enabled);
-    // fromKey: while a melody is played, facts appear at most every 4 s.
-    const release = (pluck: Pluck, fromKey = false) => {
+    // Every pluck brings a fact, on the other side from the last one: played
+    // fast, facts come and go as fast as the notes.
+    const release = (pluck: Pluck) => {
       if (pluck.released) return;
       pluck.released = true; pluck.start = performance.now();
       // A tap still gives the string a visible flick.
       if (Math.abs(pluck.amplitude) < .008) pluck.amplitude = .012 * Math.sign(pluck.amplitude || 1);
       sounds.play(pluck.index, .55 + Math.abs(pluck.amplitude) / .03 * .45);
-      if (fromKey && pluck.start - lastFact < 4000) return;
-      lastFact = pluck.start;
       factIndex = (factIndex + 1 + Math.floor(Math.random() * (facts.length - 1))) % facts.length;
-      lastSide = Math.random() < .7 ? (lastSide === 'left' ? 'right' : 'left') : lastSide;
-      setFact({ text: facts[factIndex], side: lastSide, number: ++factCount });
+      lastSide = lastSide === 'left' ? 'right' : 'left';
+      const fact: Fact = { id: ++factCount, text: facts[factIndex], side: lastSide };
+      setShownFacts((shown) => [...shown.filter((f) => f.side !== fact.side), fact]);
+      const timer = window.setTimeout(() => { factTimers.delete(timer); setShownFacts((shown) => shown.filter((f) => f.id !== fact.id)); }, factHold);
+      factTimers.add(timer);
     };
     // Key or on-screen keycap: pluck the string near the bridge, like a pick.
     let unlight = 0;
@@ -243,7 +251,7 @@ export default function ReleasePage() {
       const string = strings[index];
       const pluck: Pluck = { index, at: string.half * .5, amplitude: .016 * (index % 2 ? 1 : -1), start: performance.now(), released: false, hookX: 0 };
       plucks.set(index, pluck);
-      release(pluck, true);
+      release(pluck);
       setLitKey(index); clearTimeout(unlight); unlight = window.setTimeout(() => setLitKey(-1), 170);
     };
     controls.current.pluck = pluckKey;
@@ -435,22 +443,10 @@ export default function ReleasePage() {
       container.removeEventListener('wheel', wheel); container.removeEventListener('dblclick', dive);
       strings.forEach((s) => { s.hit.geometry.dispose(); (s.hit.material as THREE.Material).dispose(); });
       beamGeometry.dispose(); beamMaterial.dispose(); dustGeometry.dispose(); dustMaterial.dispose(); dustTexture.dispose();
-      environment.dispose(); pmrem.dispose(); sounds.dispose(); clearTimeout(unlight);
+      environment.dispose(); pmrem.dispose(); sounds.dispose(); clearTimeout(unlight); factTimers.forEach((timer) => clearTimeout(timer));
       model.dispose(); renderer.dispose(); renderer.domElement.remove();
     };
   }, []);
-
-  // Facts float in on the side they belong to and dissolve after a while.
-  useEffect(() => {
-    const box = factBox.current;
-    if (!box) return;
-    if (!fact) { gsap.to(box, { autoAlpha: 0, duration: .3, overwrite: true }); return; }
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const tl = gsap.timeline()
-      .fromTo(box, { autoAlpha: 0, y: 40, filter: 'blur(12px)' }, { autoAlpha: 1, y: 0, filter: 'blur(0px)', duration: reduced ? 0 : .9, ease: 'power3.out', clearProps: 'filter' })
-      .to(box, { autoAlpha: 0, y: -20, filter: 'blur(8px)', duration: reduced ? 0 : .6, ease: 'power2.in' }, '+=6');
-    return () => { tl.kill(); };
-  }, [fact]);
 
   const zoomed = zoom.free || zoom.strings;
   return <main className="release">
@@ -474,8 +470,19 @@ export default function ReleasePage() {
       <button aria-label="Отдалить" onClick={() => { clickSound(); controls.current.zoomBy(1.6); }}><Minus size={18}/></button>
     </div>
     {zoomed && <button className="release-zoom-out" onClick={() => { clickSound(); controls.current.zoomOut(); }}><ZoomOut size={18}/><span>{zoom.strings ? 'К гитаре' : 'Отдалить'}</span></button>}
-    <div ref={factBox} className={`release-fact is-${fact?.side ?? 'right'}`} role="status" aria-live="polite">
-      {fact && <GlassCard {...darkGlass} radius={22} padding={24} interactive={false}><span className="eyebrow">Факт о релизе · {String(fact.number).padStart(2, '0')}</span><p>{fact.text}</p></GlassCard>}
-    </div>
+    {/* Facts drift in from their own edge, word by word out of a blur
+        (SoftBlurIn), and blur away faster than they came. */}
+    <MotionConfig reducedMotion="user"><div role="status" aria-live="polite">
+      {(['left', 'right'] as const).map((side) => <div key={side} className={`release-fact is-${side}`}>
+        <AnimatePresence mode="popLayout">
+          {shownFacts.filter((fact) => fact.side === side).map((fact) => <motion.p key={fact.id} className="release-fact-item"
+            initial={{ x: side === 'left' ? -36 : 36, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { duration: .7, ease: [0.22, 1, 0.36, 1] } }}
+            exit={{ x: side === 'left' ? -18 : 18, opacity: 0, transition: { duration: .3, ease: [0.4, 0, 1, 1] } }}>
+            <span className="eyebrow">Факт о релизе · {String(fact.id).padStart(2, '0')}</span>
+            <SoftBlurIn className="fact-text" by="word" stagger={22} duration={.55} exitDuration={.22}>{fact.text}</SoftBlurIn>
+          </motion.p>)}
+        </AnimatePresence>
+      </div>)}
+    </div></MotionConfig>
   </main>;
 }
