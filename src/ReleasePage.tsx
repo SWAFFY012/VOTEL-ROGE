@@ -146,7 +146,7 @@ export default function ReleasePage() {
     };
     // String close-up: neck turned to a slight diagonal so the strings read in depth.
     const closeUp = new THREE.Quaternion().setFromEuler(new THREE.Euler(.18, -.3, -.55));
-    const neckPoint = new THREE.Vector3(-.04, .95, .14);
+    const neckPoint = new THREE.Vector3(0, .95, .245);
     const view = { zoom: 0 };
     let zoomFrom = new THREE.Quaternion();
 
@@ -197,7 +197,7 @@ export default function ReleasePage() {
     };
     const onNeck = (point: THREE.Vector3) => {
       const local = model.group.worldToLocal(point.clone());
-      return local.y > -.6 && local.y < 2.5 && Math.abs(local.x + .04) < .17;
+      return local.y > -.6 && local.y < 2.45 && Math.abs(local.x) < .17;
     };
 
     let reported = '', stringMode = false;
