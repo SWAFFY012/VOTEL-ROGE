@@ -60,6 +60,8 @@ export default function MeridianTransition({motion}:{motion:React.RefObject<{pro
 
         vec2 distortedPosition2 = newUV + getRotM(angle2) * dispVec * intensity * (1.0 - progress);
         vec4 t2 = texture2D(texture2, distortedPosition2);
+        // The child cover sits behind the phrases: muted so it does not shout.
+        t2.rgb = mix(vec3(dot(t2.rgb, vec3(.299, .587, .114))), t2.rgb, .48) * .9;
 
         gl_FragColor = mix(t1, t2, progress);
       }`});

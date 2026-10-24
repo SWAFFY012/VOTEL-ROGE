@@ -13,8 +13,6 @@ import CursorRing from '@/components/CursorRing';
 import InteractivePeelReveal from '@/components/InteractivePeelReveal';
 import MeridianTransition from '@/components/MeridianTransition';
 import EyeBlink, { type BlinkControl } from '@/components/EyeBlink';
-import SoftBlurIn from '@/components/ui/soft-blur-in';
-import { AnimatePresence } from 'motion/react';
 import { restart, soundPreference, startsAtFinal, travel } from '@/lib/navigation';
 import { createScrollAudio, type ScrollAudio } from '@/lib/scrollAudio';
 
@@ -184,6 +182,8 @@ export default function App() {
       const cardsWindow=root.current!.querySelector<HTMLElement>('.final-field-clip')!;
       const portalCopy=root.current!.querySelector<HTMLElement>('.portal-copy')!;
       gsap.set('.action-panel',{autoAlpha:0,y:65,filter:'blur(14px)'});
+      const finalTitle=root.current!.querySelector<HTMLElement>('.final-title')!;
+      gsap.set(finalTitle,{autoAlpha:0,y:-30,filter:'blur(14px)'});
       gsap.set('.animated-word',{yPercent:115,opacity:0});
       let activeChapter=-2;
       let chapterAnimation:gsap.core.Timeline|undefined;
@@ -209,7 +209,10 @@ export default function App() {
         .to({},{duration:.001},.999);
       const trigger=ScrollTrigger.create({trigger:'.scroll-track',start:()=>innerHeight*2,end:'bottom bottom',scrub:.6,animation:tl,invalidateOnRefresh:true});
       let lastGeometry='';
-      const cardsReveal=gsap.timeline({paused:true}).to(panels,{autoAlpha:1,y:0,filter:'blur(0px)',duration:media.matches?0:1.2,stagger:media.matches?0:.1,ease:'power3.out',onComplete:()=>{gsap.set(panels,{clearProps:'filter'});panels.forEach(panel=>{panel.inert=false;});}});
+      // The VOTEL-ROGE title settles from above, the cards rise after it.
+      const cardsReveal=gsap.timeline({paused:true})
+        .to(finalTitle,{autoAlpha:1,y:0,filter:'blur(0px)',duration:media.matches?0:1.4,ease:'power3.out'},0)
+        .to(panels,{autoAlpha:1,y:0,filter:'blur(0px)',duration:media.matches?0:1.2,stagger:media.matches?0:.1,ease:'power3.out',onComplete:()=>{gsap.set([...panels,finalTitle],{clearProps:'filter'});panels.forEach(panel=>{panel.inert=false;});}},media.matches?0:.15);
       // Finale: once the last plate has left, the page stops following the
       // wheel, the eye blinks child cover → flower cover on its own, and the
       // platform cards float in. Scrolling well back blinks back again.
@@ -349,7 +352,7 @@ export default function App() {
       <div className="inspire-copy inspire-2 inspire-left" aria-hidden="true"><h2><span className="reveal-line"><span><b className="word-mask"><span className="animated-word">ПРОДОЛЖИТЬ</span></b> <b className="word-mask"><span className="animated-word">—</span></b></span></span><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">значит</i></b> <b className="word-mask"><i className="animated-word">услышать</i></b></span></span></h2></div>
       <GuitarScene motion={motion}/>
       <div className="letov-note" ref={noteBox} role="status" aria-live="polite"><p>{note>=0?letovNotes[note]:''}</p></div>
-      <div className="final-field-clip" style={{position:'absolute',inset:0,zIndex:7,pointerEvents:'none'}}><div className="final-field">
+      <div className="final-field-clip" style={{position:'absolute',inset:0,zIndex:7,pointerEvents:'none'}}><h2 className="final-title">VOTEL-ROGE</h2><div className="final-field">
         {platforms.map((p,index)=><div className={'action-panel platform-card platform-'+index} key={p.name} onPointerEnter={event=>{if(event.pointerType==='mouse')playEffect('hover');}}><GlassCard {...darkGlass} className="glass-shell" radius={20} padding={0}><a onClick={()=>playEffect('click')} href={p.url} target="_blank" rel="noreferrer" aria-label={p.name+' — открыть площадку'}><span className="platform-monogram" style={{color:p.color}} aria-hidden="true">{p.mark}</span><span>{p.name}</span><ArrowUpRight size={23}/></a></GlassCard></div>)}
         <div className="action-panel about-panel" onPointerEnter={event=>{if(event.pointerType==='mouse')playEffect('hover');}}><GlassCard {...darkGlass} className="glass-shell" radius={20} padding={18}><section aria-label="О проекте"><span className="eyebrow">VOTEL-ROGE</span><h2>Услышать<br/><i>немного больше.</i></h2><InteractiveHoverButton text="ОЗНАКОМИТЬСЯ ЛУЧШЕ" className="learn-button" onClick={()=>{playEffect('click');travel('#/release');}}/></section></GlassCard></div>
       </div></div>
@@ -363,9 +366,6 @@ export default function App() {
     <audio ref={hover} src="/audio/card-hover.mp3" preload="auto" hidden/>
     <audio ref={click} src="/audio/card-click.mp3" preload="auto" hidden/>
     {needsInteraction&&soundEnabled&&<div className="sound-hint" role="status">Нажмите, чтобы включить музыку</div>}
-    {/* Calligraphic hint in the middle of the sheet, no plate; it leaves as
-        soon as the sheet starts to come off. */}
-    <div className="peel-hint" aria-hidden="true"><AnimatePresence>{loaded&&peelVisible&&peelProgress<.01&&<p key="hint" className="peel-hint-text"><SoftBlurIn delay={700} stagger={45} duration={1.3} exitDuration={.45}>Потяните за угол</SoftBlurIn></p>}</AnimatePresence></div>
     {loaded&&<div className="page-nav" role="group" aria-label="Навигация"><button onClick={()=>{playEffect('click');restart(180);}}><RotateCcw size={17}/><span>В начало</span></button><button onClick={()=>{playEffect('click');controls.current?.skip();}}><FastForward size={18}/><span>Пропустить анимации</span></button></div>}
     <div className="sound-toggle" data-enabled={soundEnabled} role="group" aria-label="Звук"><button aria-label="Включить звук" aria-pressed={soundEnabled} onClick={()=>setSoundEnabled(true)}><Volume2 size={19}/></button><button aria-label="Выключить звук" aria-pressed={!soundEnabled} onClick={()=>setSoundEnabled(false)}><VolumeX size={19}/></button></div>
     {!loaded&&<LoadingIntro onComplete={finishLoading}/>}

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import gsap from 'gsap';
 import { ArrowLeft, Minus, Plus, RotateCcw, ZoomOut } from 'lucide-react';
 import { createGuitar } from '@/lib/guitarModel';
@@ -34,30 +33,100 @@ const factHold = 3200;
 type Pluck = { index: number; at: number; amplitude: number; start: number; released: boolean; hookX: number };
 type Controls = { zoomOut: () => void; zoomBy: (factor: number) => void; pluck: (index: number) => void };
 
-// Volumetric beam: a cone lit by facing ratio and fading with distance from
-// the lamp, with slow streaks like the rays on the stage photograph. It is
-// depth-tested, so the half in front of the guitar lays light over it.
-const beamVertex = `
-  varying vec3 vNormalView; varying vec3 vLocal;
+// Letov's room: the photograph projected back onto a rough box seen from the
+// home camera (the window wall, the side walls, the floor), read off the
+// photo's one-point perspective. From home it is exactly the photo; as the
+// camera moves in or sideways, near and far parts of the room shift against
+// each other like a real room. The mesh reaches a little past the photo so a
+// moved camera never sees its edge (the border pixels just stretch, blurred).
+const roomVertex = `
+  uniform vec2 uHalf; uniform float uOffsetY, uBack, uHome;
+  varying vec2 vUv;
+  // The window wall in photo uv: its left and right corners and the floor line.
+  const vec3 wall = vec3(.305, .64, .135);
   void main(){
-    vLocal = position;
-    vNormalView = normalize(normalMatrix * normal);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vUv = uv;
+    vec2 ray = vec2((uv.x - .5) * 2. * uHalf.x, uOffsetY + (uv.y - .5) * 2. * uHalf.y);
+    float left = (wall.x - .5) * 2. * uHalf.x, right = (wall.y - .5) * 2. * uHalf.x;
+    float floorLine = uOffsetY + (wall.z - .5) * 2. * uHalf.y;
+    float depth = uBack;
+    if (ray.x < left) depth = min(depth, uBack * left / ray.x);
+    if (ray.x > right) depth = min(depth, uBack * right / ray.x);
+    if (floorLine < 0. && ray.y < floorLine) depth = min(depth, uBack * floorLine / ray.y);
+    depth = max(depth, 2.);
+    gl_Position = projectionMatrix * viewMatrix * vec4(ray * depth, uHome - depth, 1.);
   }`;
-const beamFragment = `
-  uniform float uTime, uOpacity, uHeight;
-  varying vec3 vNormalView; varying vec3 vLocal;
+// Daylight from the window: it falls off into the room, breathes with the
+// clouds (uLight) and glows around the frame; the room is out of focus
+// (uBlur, a disc blur radius in photo pixels), more so the closer the camera.
+const roomFragment = `
+  uniform sampler2D uPhoto; uniform float uLight, uBlur;
+  varying vec2 vUv;
+  const vec2 windowCentre = vec2(.495, .65);
   void main(){
-    float facing = pow(abs(vNormalView.z), 2.2);
-    float along = clamp(.5 - vLocal.y / uHeight, 0., 1.);
-    float fade = smoothstep(0., .12, along) * (1. - smoothstep(.62, 1., along));
-    float angle = atan(vLocal.x, vLocal.z);
-    float streaks = .72 + .28 * sin(angle * 13. + uTime * .35) * sin(angle * 5. - uTime * .2);
-    gl_FragColor = vec4(vec3(1., .95, .88) * facing * fade * streaks * uOpacity, 1.);
+    vec2 uv = clamp(vUv, 0., 1.);
+    // 24 taps on a golden-angle disc, from a softened mip level.
+    vec3 photo = vec3(0.);
+    for (int i = 0; i < 24; i++) {
+      float a = float(i) * 2.39996, r = sqrt((float(i) + .5) / 24.) * uBlur;
+      photo += texture2D(uPhoto, uv + vec2(cos(a) / 1671., sin(a) / 941.) * r, 2.).rgb;
+    }
+    photo /= 24.;
+    photo = mix(vec3(dot(photo, vec3(.299, .587, .114))), photo, .82);
+    vec3 haze = texture2D(uPhoto, uv, 6.).rgb;
+    vec2 d = (uv - windowCentre) * vec2(1.5, 1.);
+    float near = exp(-dot(d, d) * 3.5);
+    vec3 colour = photo * mix(.48, .9, near) * mix(1., uLight, .3 + .7 * near);
+    colour += max(haze - .62, 0.) * .5 * uLight * near;
+    // Keep the panes from burning out: the trees behind the glass show, and
+    // the light rays added on top carry the glare.
+    colour = min(colour, vec3(.72)) + max(colour - .72, 0.) * .4;
+    vec2 v = vUv - .5;
+    colour *= 1. - dot(v, v) * .7;
+    gl_FragColor = vec4(colour, 1.);
   }`;
+// The bright panes of the window, for the light rays (everything else black).
+const windowFragment = `
+  uniform sampler2D uPhoto; uniform float uLight;
+  varying vec2 vUv;
+  void main(){
+    vec2 uv = clamp(vUv, 0., 1.);
+    float lum = dot(texture2D(uPhoto, uv, 1.).rgb, vec3(.299, .587, .114));
+    vec2 inside = smoothstep(vec2(.40, .405), vec2(.415, .43), uv) * (1. - smoothstep(vec2(.575, .87), vec2(.59, .894), uv));
+    gl_FragColor = vec4(vec3(1., .97, .9) * smoothstep(.6, .92, lum) * inside.x * inside.y * uLight, 1.);
+  }`;
+// Light scattering in the room's air: the window mask smeared toward the
+// window on screen (GPU Gems 3, ch. 13). The guitar is drawn black into the
+// mask first, so the shafts break around its silhouette.
+const raysFragment = `
+  uniform sampler2D uMask; uniform vec2 uSource; uniform float uStrength;
+  varying vec2 vUv;
+  void main(){
+    vec2 step = (vUv - uSource) * (.9 / 48.);
+    // A per-pixel offset along the ray hides the banding between samples.
+    float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    vec2 coord = vUv - step * jitter; float fall = 1.; vec3 sum = vec3(0.);
+    for (int i = 0; i < 48; i++) { coord -= step; sum += texture2D(uMask, coord).rgb * fall; fall *= .955; }
+    gl_FragColor = vec4(sum * uStrength / 48., 1.);
+  }`;
+const flatVertex = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`;
+
+// Clouds over the window: a slow, irregular swell of the daylight, shared by
+// the room, the rays, the guitar's lights and its shadow.
+const daylight = (t: number) => 1 + .1 * Math.sin(t * .21) + .06 * Math.sin(t * .53 + 1.3) + .035 * Math.sin(t * 1.07 + .4);
+
+// A soft dark blot (shadow) on a canvas, darkest at (x, y) of 128 × 128.
+const blot = (x: number, y: number, radius: number) => {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
+  const paint = canvas.getContext('2d')!;
+  const gradient = paint.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, 'rgba(0,0,0,1)'); gradient.addColorStop(.4, 'rgba(0,0,0,.5)'); gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  paint.fillStyle = gradient; paint.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+};
 
 export default function ReleasePage() {
-  const host = useRef<HTMLDivElement>(null), shadow = useRef<HTMLDivElement>(null), backdrop = useRef<HTMLImageElement>(null);
+  const host = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState({ free: false, strings: false });
   // At most one fact per corner; a newer one in a corner replaces the older.
   const [shownFacts, setShownFacts] = useState<Fact[]>([]);
@@ -75,47 +144,88 @@ export default function ReleasePage() {
   useEffect(() => {
     const container = host.current!;
     let renderer: THREE.WebGLRenderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); } catch { return; }
+    try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { return; }
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x050304, 1);
     container.appendChild(renderer.domElement);
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(34, 1, .05, 60);
+    const camera = new THREE.PerspectiveCamera(34, 1, .05, 80);
     const home = new THREE.Vector3(0, 0, 12);
     camera.position.copy(home);
 
-    // Light: a real spotlight from above and in front, so the lacquer on the
-    // guitar catches it and the highlights move as the guitar turns.
+    // Reflections: a dim warm room, the bright window behind the guitar and
+    // daylight bounced off the walls in front of it; the lacquer picks these
+    // up as soft highlights that slide over it as it turns.
     const pmrem = new THREE.PMREMGenerator(renderer);
-    const environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
-    scene.environment = environment; scene.environmentIntensity = .22;
-    scene.add(new THREE.HemisphereLight(0xb9c0cc, 0x140c0a, .5));
-    const lampTarget = new THREE.Object3D(); scene.add(lampTarget);
-    const lamp = new THREE.SpotLight(0xfff0dc, 7.5, 0, .36, .8, 0);
-    lamp.position.set(0, 7.6, 5.2); lamp.target = lampTarget; scene.add(lamp);
-    const rim = new THREE.DirectionalLight(0xdfe7ff, 1.4); rim.position.set(0, 5, -6); scene.add(rim);
-    const fill = new THREE.DirectionalLight(0xffe7d4, .3); fill.position.set(0, -1, 8); scene.add(fill);
+    const envScene = new THREE.Scene();
+    const envParts: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = [];
+    const envPart = (geometry: THREE.BufferGeometry, color: THREE.Color, at: [number, number, number]) => {
+      const material = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...at); mesh.lookAt(0, 0, 0);
+      envScene.add(mesh); envParts.push({ geometry, material });
+    };
+    envPart(new THREE.SphereGeometry(30, 32, 16), new THREE.Color(0x2c1e18), [0, 0, 0]);
+    envPart(new THREE.PlaneGeometry(7, 10), new THREE.Color(0xf2f5ff).multiplyScalar(5), [0, 3, -16]);
+    envPart(new THREE.PlaneGeometry(10, 7), new THREE.Color(0xfff0e0).multiplyScalar(1.3), [-7, 4, 13]);
+    envPart(new THREE.PlaneGeometry(40, 40), new THREE.Color(0x3c1611), [0, -12, 0]);
+    const environment = pmrem.fromScene(envScene, .04).texture;
+    scene.environment = environment; scene.environmentIntensity = .45;
+
+    // Lights: daylight from the window behind and above, the room's warm
+    // bounce in front, the red carpet from below.
+    const sky = new THREE.HemisphereLight(0xfff3e6, 0x4a1d14, .38); scene.add(sky);
+    const windowLight = new THREE.DirectionalLight(0xeef2ff, 3); scene.add(windowLight);
+    const bounce = new THREE.DirectionalLight(0xffe2c8, .42); bounce.position.set(-4, 2.5, 8); scene.add(bounce);
 
     const model = createGuitar(renderer, undefined, { lit: true });
     const holder = new THREE.Group();
     holder.add(model.group); scene.add(holder);
 
-    // Beam and dust live in the room, not on the guitar: they stay put while
-    // it turns, and the dust drifts both in front of and behind it.
-    // Light adds to the colour but never to the canvas alpha, so it brightens
-    // the stage photo behind the transparent canvas instead of covering it.
+    // The room (drawn first, behind everything) and its window mask.
+    const photo = new THREE.TextureLoader().load('/release/letov-room.webp');
+    photo.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const roomUniforms = {
+      uPhoto: { value: photo }, uHalf: { value: new THREE.Vector2(1, 1) }, uOffsetY: { value: 0 },
+      uBack: { value: 15 }, uHome: { value: home.z }, uLight: { value: 1 }, uBlur: { value: 5 },
+    };
+    const roomGeometry = new THREE.PlaneGeometry(1, 1, 192, 108);
+    const roomUv = roomGeometry.attributes.uv as THREE.BufferAttribute;
+    for (let i = 0; i < roomUv.count; i++) roomUv.setXY(i, roomUv.getX(i) * 1.3 - .15, roomUv.getY(i) * 1.3 - .15);
+    const roomMaterial = new THREE.ShaderMaterial({ uniforms: roomUniforms, vertexShader: roomVertex, fragmentShader: roomFragment, depthTest: false, depthWrite: false });
+    const room = new THREE.Mesh(roomGeometry, roomMaterial);
+    room.frustumCulled = false; room.renderOrder = -1; scene.add(room);
+    const windowMaterial = new THREE.ShaderMaterial({ uniforms: roomUniforms, vertexShader: roomVertex, fragmentShader: windowFragment, depthTest: false, depthWrite: false });
+    const windowScene = new THREE.Scene(), windowMesh = new THREE.Mesh(roomGeometry, windowMaterial);
+    windowMesh.frustumCulled = false; windowScene.add(windowMesh);
+    // Light rays: the window mask (with the guitar black in it) at half size,
+    // smeared toward the window and added over the picture.
+    const mask = new THREE.WebGLRenderTarget(1, 1);
+    const rayUniforms = { uMask: { value: mask.texture }, uSource: { value: new THREE.Vector2(.5, .65) }, uStrength: { value: 1 } };
+    const raysMaterial = new THREE.ShaderMaterial({ uniforms: rayUniforms, vertexShader: flatVertex, fragmentShader: raysFragment, blending: THREE.AdditiveBlending, transparent: true, depthTest: false, depthWrite: false });
+    const raysGeometry = new THREE.PlaneGeometry(2, 2);
+    const raysScene = new THREE.Scene(), rays = new THREE.Mesh(raysGeometry, raysMaterial);
+    rays.frustumCulled = false; raysScene.add(rays);
+    const flatCamera = new THREE.Camera();
+    const black = new THREE.MeshBasicMaterial({ color: 0 });
+    const windowCentre = new THREE.Vector3(), lightSource = new THREE.Vector3();
+
+    // Shadow on the carpet: a dark contact patch under the guitar and a long
+    // soft one thrown toward the viewer by the window behind it.
+    // (The cast one is darkest at its far end, under the guitar: the canvas
+    // top lies away from the viewer.)
+    const contactTexture = blot(64, 64, 64), castTexture = blot(64, 40, 100);
+    const shadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const contactMaterial = new THREE.MeshBasicMaterial({ map: contactTexture, transparent: true, depthWrite: false, opacity: .9 });
+    const castMaterial = new THREE.MeshBasicMaterial({ map: castTexture, transparent: true, depthWrite: false, opacity: .45 });
+    const contact = new THREE.Mesh(shadowGeometry, contactMaterial), cast = new THREE.Mesh(shadowGeometry, castMaterial);
+    const shadows = new THREE.Group(); shadows.add(cast, contact); scene.add(shadows);
+
+    // Dust floating in the daylight between the window and the viewer; light
+    // adds to the colour, never covers it.
     const lightBlend = { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor } as const;
-    const beamHeight = 8.4;
-    const beamMaterial = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uOpacity: { value: .16 }, uHeight: { value: beamHeight } },
-      vertexShader: beamVertex, fragmentShader: beamFragment,
-      transparent: true, depthWrite: false, side: THREE.DoubleSide, ...lightBlend,
-    });
-    const beamGeometry = new THREE.CylinderGeometry(.06, 1.9, beamHeight, 64, 1, true);
-    const beam = new THREE.Mesh(beamGeometry, beamMaterial);
-    beam.renderOrder = 2; scene.add(beam);
-    const dustCount = 260;
+    const dustCount = 220;
     const dustGeometry = new THREE.BufferGeometry();
     const dustSeed = Float32Array.from({ length: dustCount * 4 }, () => Math.random());
     dustGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dustCount * 3), 3));
@@ -125,7 +235,7 @@ export default function ReleasePage() {
     glow.addColorStop(0, 'rgba(255,248,236,1)'); glow.addColorStop(.35, 'rgba(255,240,220,.45)'); glow.addColorStop(1, 'rgba(255,240,220,0)');
     paint.fillStyle = glow; paint.fillRect(0, 0, 64, 64);
     const dustTexture = new THREE.CanvasTexture(sprite);
-    const dustMaterial = new THREE.PointsMaterial({ size: .045, map: dustTexture, transparent: true, depthWrite: false, opacity: .7, color: 0xfff1de, ...lightBlend });
+    const dustMaterial = new THREE.PointsMaterial({ size: .04, map: dustTexture, transparent: true, depthWrite: false, opacity: .6, color: 0xfff6ea, ...lightBlend });
     const dust = new THREE.Points(dustGeometry, dustMaterial);
     dust.renderOrder = 3; scene.add(dust);
 
@@ -139,53 +249,64 @@ export default function ReleasePage() {
     const hits = strings.map((s) => s.hit);
     const plucks = new Map<number, Pluck>();
 
-    // Rotation: drag spins the guitar around the screen axes, with inertia.
-    const spin = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -.35, 0));
-    const velocity = { x: 0, y: 0 };
-    const axisX = new THREE.Vector3(1, 0, 0), axisY = new THREE.Vector3(0, 1, 0), step = new THREE.Quaternion();
-    const turn = (dx: number, dy: number) => {
-      spin.premultiply(step.setFromAxisAngle(axisY, dx));
-      spin.premultiply(step.setFromAxisAngle(axisX, dy));
-    };
-    // String close-up: neck turned to a slight diagonal so the strings read in depth.
-    const closeUp = new THREE.Quaternion().setFromEuler(new THREE.Euler(.18, -.3, -.55));
+    // The guitar stands in its place in the room: it only turns about its own
+    // upright axis (drag, with inertia), never tilts or drifts.
+    let yaw = -.35, yawFrom = yaw;
+    const velocity = { x: 0 };
+    const turn = (dx: number) => { yaw += dx; };
     const neckPoint = new THREE.Vector3(0, .95, .245);
     const view = { zoom: 0 };
-    let zoomFrom = new THREE.Quaternion();
 
-    // Free camera: distance d along z, looking straight ahead at (x, y).
-    // Zooming keeps the point under the cursor fixed; zooming all the way out
-    // recentres on the stage.
-    const nearest = 1.3, tanHalf = Math.tan(THREE.MathUtils.degToRad(17));
-    const cam = { x: 0, y: 0, d: home.z }, goal = { x: 0, y: 0, d: home.z };
+    // Camera: straight ahead, from the room's centre line. It moves in toward
+    // the guitar (no closer than `nearest`) and, closer in, up and down along
+    // it to the point under the cursor; never sideways or past the room.
+    const nearest = 4.5, tanHalf = Math.tan(THREE.MathUtils.degToRad(17));
+    const cam = { y: 0, d: home.z }, goal = { y: 0, d: home.z };
+    // A slight sway with the mouse, so the room shows its depth.
+    const sway = { x: 0, y: 0 }, swayGoal = { x: 0, y: 0 };
     const clampGoal = () => {
-      const room = 1 - (goal.d - nearest) / (home.z - nearest), reach = 3.1 * room;
-      goal.x = THREE.MathUtils.clamp(goal.x, -reach * 1.3, reach * 1.3);
-      goal.y = THREE.MathUtils.clamp(goal.y, -reach, reach);
+      const room = 1 - (goal.d - nearest) / (home.z - nearest);
+      goal.y = THREE.MathUtils.clamp(goal.y, (baseY - 2.6 * scale) * room, (baseY + 2.8 * scale) * room);
     };
-    const zoomAt = (nx: number, ny: number, factor: number) => {
-      const px = goal.x + nx * tanHalf * camera.aspect * goal.d, py = goal.y + ny * tanHalf * goal.d;
+    const zoomAt = (_nx: number, ny: number, factor: number) => {
+      const py = goal.y + ny * tanHalf * goal.d;
       goal.d = THREE.MathUtils.clamp(goal.d * factor, nearest, home.z);
-      goal.x = px - nx * tanHalf * camera.aspect * goal.d; goal.y = py - ny * tanHalf * goal.d;
+      goal.y = py - ny * tanHalf * goal.d;
       clampGoal();
     };
 
-    let scale = 1, baseY = 0, visibleHeight = 1;
+    let scale = 1, baseY = 0, visibleHeight = 1, floorY = -3;
     const resize = () => {
       const w = container.clientWidth, h = container.clientHeight;
+      if (!w || !h) return;
       renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
       visibleHeight = 2 * tanHalf * home.z;
       // Fit the guitar between a small top margin and the controls at the
       // bottom (keycaps, hint, navigation), whose height depends on the width.
       // The guitar is the subject here: it fills all the height the controls
       // leave free (up to 90% of the screen), and most of a narrow screen's width.
-      const reserved = w <= 700 ? 176 : w <= 1100 ? 196 : 146, top = h * .03;
+      const reserved = w <= 700 ? 196 : w <= 1100 ? 216 : 172, top = h * .03;
       const room = Math.max(h * .5, h - reserved - top);
       scale = Math.min(.9 * visibleHeight / 6.83, room / h * visibleHeight / 6.83, .86 * visibleHeight * camera.aspect / 2.21);
       baseY = (.5 - (top + room / 2) / h) * visibleHeight;
-      if (shadow.current) shadow.current.style.top = `${((.5 - (baseY - 3.45 * scale) / visibleHeight) * 100 + 1.2).toFixed(2)}%`;
-      beam.position.set(0, baseY + visibleHeight * .5 + .6 - beamHeight / 2, -.2);
-      lampTarget.position.set(0, baseY, 0);
+      floorY = baseY - 3.45 * scale;
+      // The photo covers the screen from home, its bottom on the screen's
+      // bottom edge (so the carpet stays in view), 35% larger than the screen:
+      // that lifts the floor line to just under the guitar's foot.
+      const halfY = Math.max(tanHalf, tanHalf * camera.aspect / (1671 / 941)) * 1.35;
+      roomUniforms.uHalf.value.set(halfY * 1671 / 941, halfY);
+      roomUniforms.uOffsetY.value = halfY - tanHalf;
+      // The window wall stands behind the guitar; where the photo allows, as
+      // far back as its floor line puts it under the guitar's foot.
+      const floorLine = roomUniforms.uOffsetY.value + (.135 - .5) * 2 * halfY;
+      roomUniforms.uBack.value = Math.max(14.5, floorY / floorLine);
+      windowCentre.set((.495 - .5) * 2 * halfY * 1671 / 941, roomUniforms.uOffsetY.value + (.65 - .5) * 2 * halfY, -1).multiplyScalar(roomUniforms.uBack.value);
+      windowCentre.z += home.z;
+      windowLight.position.copy(windowCentre); windowLight.target.position.set(0, baseY, 0); windowLight.target.updateMatrixWorld();
+      contact.scale.set(2.3 * scale, 1, 2.2 * scale); contact.position.set(0, floorY + .003, .15 * scale);
+      cast.position.set(0, floorY + .002, 1.2 * scale);
+      const pixelRatio = renderer.getPixelRatio();
+      mask.setSize(Math.round(w * pixelRatio / 2), Math.round(h * pixelRatio / 2));
     };
     resize(); addEventListener('resize', resize);
 
@@ -210,7 +331,9 @@ export default function ReleasePage() {
       if (key !== reported) { reported = key; setZoom(next); }
     };
     const enterStrings = () => {
-      zoomFrom = spin.clone(); velocity.x = velocity.y = 0;
+      // Turn back to face the viewer the short way round, still upright.
+      yawFrom = yaw; velocity.x = 0;
+      yaw -= THREE.MathUtils.euclideanModulo(yaw + .3 + Math.PI, Math.PI * 2) - Math.PI;
       stringMode = true; report();
       gsap.to(view, { zoom: 1, duration: reduced ? 0 : 1.5, ease: 'power3.inOut', overwrite: true });
     };
@@ -222,7 +345,7 @@ export default function ReleasePage() {
     Object.assign(controls.current, {
       zoomOut: () => {
         if (view.zoom > 0) leaveStrings();
-        else { goal.x = goal.y = 0; goal.d = home.z; report(); }
+        else { goal.y = 0; goal.d = home.z; report(); }
       },
       zoomBy: (factor: number) => {
         if (view.zoom > 0) { if (factor > 1) leaveStrings(); return; }
@@ -314,10 +437,13 @@ export default function ReleasePage() {
         const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
         drag.x = event.clientX; drag.y = event.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
         // Closer in, the same hand movement turns the guitar less.
-        const gain = .009 * (.3 + .7 * cam.d / home.z);
-        velocity.x = dx * gain; velocity.y = dy * gain;
-        turn(velocity.x, velocity.y);
+        velocity.x = dx * .009 * (.3 + .7 * cam.d / home.z);
+        turn(velocity.x);
         return;
+      }
+      if (event.pointerType === 'mouse') {
+        const p = toNdc(event.clientX, event.clientY);
+        swayGoal.x = p.x * .35; swayGoal.y = Math.max(0, p.y) * .12;
       }
       if (view.zoom === 0 && event.pointerType === 'mouse') {
         aim(event);
@@ -386,46 +512,50 @@ export default function ReleasePage() {
       const t = clock.getElapsedTime(), dt = Math.min(.05, t - last); last = t;
       const z = view.zoom, ease = z * z * (3 - 2 * z);
       // Camera eases toward its goal, so wheel steps glide instead of jump.
-      const k = reduced ? 1 : 1 - Math.exp(-dt * 7);
-      cam.x += (goal.x - cam.x) * k; cam.y += (goal.y - cam.y) * k; cam.d += (goal.d - cam.d) * k;
+      const k = reduced ? 1 : 1 - Math.exp(-dt * 7), ks = reduced ? 0 : 1 - Math.exp(-dt * 2.5);
+      cam.y += (goal.y - cam.y) * k; cam.d += (goal.d - cam.d) * k;
+      sway.x += (swayGoal.x - sway.x) * ks; sway.y += (swayGoal.y - sway.y) * ks;
       const distance = cam.d / home.z;
       // Free spin: inertia after a drag, then a slow idle turn at full view.
       if (!drag && z === 0) {
-        velocity.x *= .94; velocity.y *= .94;
-        if (Math.abs(velocity.x) + Math.abs(velocity.y) > .0004) turn(velocity.x, velocity.y);
-        else if (!reduced && distance > .95) turn(.0025, 0);
+        velocity.x *= .94;
+        if (Math.abs(velocity.x) > .0004) turn(velocity.x);
+        else if (!reduced && distance > .95) turn(.0025);
       }
-      holder.quaternion.copy(z > 0 ? zoomFrom.clone().slerp(closeUp, ease) : spin);
+      holder.rotation.set(0, z > 0 ? THREE.MathUtils.lerp(yawFrom, yaw, ease) : yaw, 0);
       holder.scale.setScalar(scale);
-      const float = reduced ? 0 : Math.sin(t * 1.1) * .09 * (1 - ease) * distance;
-      holder.position.set(0, baseY + float, 0);
+      holder.position.set(0, baseY, 0);
       holder.updateMatrixWorld(true);
       // Camera: free view, glides to the strings on the neck in string mode.
       target.copy(neckPoint); model.group.localToWorld(target);
-      close.copy(target).add(new THREE.Vector3(0, 0, .95));
-      free.set(cam.x, cam.y, cam.d);
+      close.copy(target).add(new THREE.Vector3(0, 0, 1.5));
+      free.set(sway.x, cam.y + sway.y, cam.d);
       camera.position.lerpVectors(free, close, ease);
-      look.set(cam.x, cam.y, 0).lerp(target, ease);
+      look.set(sway.x, cam.y + sway.y, 0).lerp(target, ease);
       camera.lookAt(look);
-      // The stage photo moves a little with the camera, so zoom reads as depth.
-      const depth = 1 - Math.min(distance, 1 - ease * .6);
-      if (backdrop.current) backdrop.current.style.transform = `translate3d(${-cam.x * 6}px, ${cam.y * 6}px, 0) scale(${1 + depth * .22})`;
-      if (shadow.current) {
-        shadow.current.style.opacity = String(Math.max(0, (1 - ease) * (.55 - float * 1.4) * THREE.MathUtils.clamp((distance - .55) / .4, 0, 1)));
-        shadow.current.style.transform = `translateX(-50%) scale(${1 - float * 1.6})`;
-      }
-      // Light: the lamp breathes a little, the beam softens up close.
-      lamp.intensity = 7.5 * (1 + (reduced ? 0 : Math.sin(t * 2.3) * .025 + Math.sin(t * 7.1) * .01));
-      beamMaterial.uniforms.uTime.value = t;
-      // Up close the camera is inside the beam; thin it out so it never fogs the view.
-      beamMaterial.uniforms.uOpacity.value = .16 * THREE.MathUtils.smoothstep(distance, .25, .8) * (1 - ease * .85);
-      dustMaterial.opacity = .7 * (.35 + .65 * THREE.MathUtils.smoothstep(distance, .2, .7));
+      camera.updateMatrixWorld();
+      // Daylight: clouds pass, and everything the window lights follows.
+      const light = reduced ? 1 : daylight(t);
+      roomUniforms.uLight.value = light;
+      // Depth of field: the room softens as the camera closes in.
+      roomUniforms.uBlur.value = 5 + (1 - distance) * 14 + ease * 8;
+      windowLight.intensity = 4.2 * light * light;
+      sky.intensity = .38 * (.8 + .2 * light);
+      // The shadow follows the guitar's turn: wide face-on, narrow edge-on.
+      const across = .32 + .68 * Math.abs(Math.cos(holder.rotation.y));
+      contact.scale.x = 2.4 * scale * across;
+      cast.scale.set(2.2 * scale * across, 1, 2.8 * scale);
+      contactMaterial.opacity = .9 * (1 - ease * .6);
+      castMaterial.opacity = .55 * light * light * (1 - ease * .6);
+      // Rays from wherever the window is on screen now.
+      lightSource.copy(windowCentre).project(camera);
+      rayUniforms.uSource.value.set(lightSource.x * .5 + .5, lightSource.y * .5 + .5);
+      rayUniforms.uStrength.value = 2.4 * light * light * (1 - ease * .5);
+      dustMaterial.opacity = .6 * light * (.4 + .6 * THREE.MathUtils.smoothstep(distance, .35, .8));
       for (let i = 0; i < dustCount; i++) {
         const a = dustSeed[i * 4], b = dustSeed[i * 4 + 1], c = dustSeed[i * 4 + 2], s = dustSeed[i * 4 + 3];
-        const rise = ((b + t * (.012 + s * .02)) % 1);
-        const radius = Math.sqrt(a) * (.35 + rise * 1.1);
-        const angle = c * Math.PI * 2 + Math.sin(t * .3 + s * 9) * .4;
-        dustPosition.setXYZ(i, Math.cos(angle) * radius, baseY + 2.9 - rise * 5.6, Math.sin(angle) * radius * .8 + .2);
+        const fall = (b + t * (.004 + s * .008)) % 1;
+        dustPosition.setXYZ(i, (a - .5) * 4.4 + Math.sin(t * .23 + s * 9) * .18, floorY + 6.8 * (1 - fall), -.8 + c * 5.4 + Math.cos(t * .17 + a * 7) * .15);
       }
       dustPosition.needsUpdate = true;
       // Strings: hooked ones follow the finger, released ones ring and settle.
@@ -439,7 +569,14 @@ export default function ReleasePage() {
         }
         bend(strings[index], amplitude, pluck.at);
       });
+      // Window mask with the guitar in black, for the rays.
+      renderer.setRenderTarget(mask); renderer.clear(); renderer.render(windowScene, camera);
+      scene.overrideMaterial = black; room.visible = shadows.visible = dust.visible = false;
+      renderer.autoClear = false; renderer.clearDepth(); renderer.render(scene, camera);
+      scene.overrideMaterial = null; room.visible = shadows.visible = dust.visible = true;
+      renderer.setRenderTarget(null); renderer.autoClear = true;
       renderer.render(scene, camera);
+      renderer.autoClear = false; renderer.render(raysScene, flatCamera); renderer.autoClear = true;
     };
     draw();
     return () => {
@@ -449,7 +586,11 @@ export default function ReleasePage() {
       container.removeEventListener('pointerup', up); container.removeEventListener('pointercancel', up);
       container.removeEventListener('wheel', wheel); container.removeEventListener('dblclick', dive);
       strings.forEach((s) => { s.hit.geometry.dispose(); (s.hit.material as THREE.Material).dispose(); });
-      beamGeometry.dispose(); beamMaterial.dispose(); dustGeometry.dispose(); dustMaterial.dispose(); dustTexture.dispose();
+      dustGeometry.dispose(); dustMaterial.dispose(); dustTexture.dispose();
+      roomGeometry.dispose(); roomMaterial.dispose(); windowMaterial.dispose(); photo.dispose(); mask.dispose();
+      raysGeometry.dispose(); raysMaterial.dispose(); black.dispose();
+      shadowGeometry.dispose(); contactTexture.dispose(); castTexture.dispose(); contactMaterial.dispose(); castMaterial.dispose();
+      envParts.forEach(({ geometry, material }) => { geometry.dispose(); material.dispose(); });
       environment.dispose(); pmrem.dispose(); sounds.dispose(); clearTimeout(unlight); factTimers.forEach((timer) => clearTimeout(timer));
       model.dispose(); renderer.dispose(); renderer.domElement.remove();
     };
@@ -457,8 +598,6 @@ export default function ReleasePage() {
 
   const zoomed = zoom.free || zoom.strings;
   return <main className="release">
-    <img className="release-bg" ref={backdrop} src="/release/stage.webp" alt=""/>
-    <div className="release-shadow" ref={shadow} aria-hidden="true"/>
     <div className={`release-stage${zoom.strings ? ' is-zoomed' : ''}`} ref={host} role="img" aria-label="Гитара Егора Летова. Потяните, чтобы повернуть; колесо или двойной клик приближают; нажмите на гриф, чтобы открыть струны."/>
     <div className="page-nav" role="group" aria-label="Навигация">
       <button onClick={() => { clickSound(); travel('#/final'); }}><ArrowLeft size={18}/><span>Назад</span></button>

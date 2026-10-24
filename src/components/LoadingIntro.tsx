@@ -8,7 +8,7 @@ export default function LoadingIntro({ onComplete }: { onComplete: () => void })
     const previousOverflow=document.body.style.overflow;
     document.body.style.overflow='hidden';
     let disposed=false,ready=0,frame=0,exit:gsap.core.Timeline|undefined;
-    const images=['/cover.jpg','/guitar-front-4k.webp','/guitar-back.png','/letov-guitars.png'];
+    const images=['/peel/flowers-wall.webp','/cover.jpg','/guitar-front-4k.webp','/guitar-back.png','/letov-guitars.png'];
     images.forEach(src=>{const img=new Image();img.onload=img.onerror=()=>{ready++;};img.src=src;});
     document.fonts.ready.finally(()=>{ready++;});
     const started=performance.now();
@@ -17,7 +17,7 @@ export default function LoadingIntro({ onComplete }: { onComplete: () => void })
     const tick=(now:number)=>{
       if(disposed)return;
       const elapsed=now-started;
-      const allReady=ready===5||elapsed>9000;
+      const allReady=ready===images.length+1||elapsed>9000;
       const duration=reduced?100:2300;
       const t=Math.min(1,elapsed/duration);
       const timeProgress=(t*t*(3-2*t))*100;
@@ -32,6 +32,8 @@ export default function LoadingIntro({ onComplete }: { onComplete: () => void })
           .to(element,{'--hole-width':'18vmin','--hole-height':'18vmin',duration:reduced?0:.65,ease:'power3.out'},.15)
           .to('.loading-copy, .loading-meter',{opacity:0,duration:reduced?0:.5},.65)
           .to(element,{'--hole-width':'100vw','--hole-height':'100vh',duration:reduced?0:1.5,ease:'power3.inOut'},.8)
+          // The flower wall dissolves into the film playing underneath.
+          .to('.loading-flowers',{opacity:0,duration:reduced?0:1.2,ease:'sine.inOut'},1.1)
           .set(element,{visibility:'hidden'});
       }else frame=requestAnimationFrame(tick);
     };
@@ -39,6 +41,7 @@ export default function LoadingIntro({ onComplete }: { onComplete: () => void })
     return()=>{disposed=true;cancelAnimationFrame(frame);exit?.kill();document.body.style.overflow=previousOverflow;};
   },[onComplete]);
   return <div className="loading-intro" ref={host} aria-label="Загрузка сайта">
+    <img className="loading-flowers" src="/peel/flowers-wall.webp" alt=""/>
     <div className="loading-shutter shutter-top"/><div className="loading-shutter shutter-bottom"/><div className="loading-shutter shutter-left"/><div className="loading-shutter shutter-right"/>
     <div className="loading-copy loading-top">ТАМ, ГДЕ<br/><i>музыка</i></div>
     <div className="loading-copy loading-bottom">СТАНОВИТСЯ<br/><i>свободой.</i></div>
