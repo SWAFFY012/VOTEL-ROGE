@@ -2,9 +2,12 @@
 // (public/models/letov-guitar.glb, Kirill_lewis) and writes src/lib/guitarFit.json:
 //
 //  1. Front: the model's top samples its own small texture (the 660 px
-//     archive photo, 512×1024). The sharp front photo is registered to that
-//     texture (ORB + RANSAC affine), so a top vertex keeps its place on the
-//     guitar and only reads the sharp photo instead.
+//     archive photo, 512×1024). The front photo is registered to that
+//     texture (ORB + RANSAC homography: the photo may be taken a little off
+//     axis), so a top vertex keeps its place on the guitar and only reads the
+//     sharp photo instead. With --mask-front everything around the top in the
+//     photo (wall, neighbouring guitars) is painted dark, so nothing of it
+//     shows where the top's edge rounds over.
 //  2. Back: the rear photo (public/guitar-back-4k.webp) is projected flat onto
 //     the whole back (body, neck, headstock); the model's back silhouette is
 //     aligned to the guitar's silhouette in the photo (box, then ECC).
@@ -16,12 +19,14 @@
 //  4. Strings: tailpiece, saddle, nut and tuner post of each string, read
 //     from the model's own string meshes, in the site's guitar frame.
 //
-// Run: node scripts/build-guitar-model.mjs
+// Run: node scripts/build-guitar-model.mjs [--mask-front] [--debug]
 import sharp from 'sharp';
 import cvReady from '@techstark/opencv-js';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const cv = await cvReady;
+// The front photo may be rewritten below (--mask-front); never serve it from cache.
+sharp.cache(false);
 const glbPath = 'public/models/letov-guitar.glb', frontPath = 'public/guitar-front-4k.webp', backPath = 'public/guitar-back-4k.webp', archivePath = 'public/letov-guitars.png';
 const debug = process.argv.includes('--debug') ? 'test-results' : '';
 
@@ -69,7 +74,7 @@ const frontRegion = [110, 540, 380, 975];
 const frontBox = uvBox(1, frontRegion);
 console.log('model texture box front', frontBox.map(Math.round));
 
-// ── 1. front photo → model texture (ORB + RANSAC affine) ──
+// ── 1. front photo → model texture (ORB + RANSAC homography) ──
 const gray = async (input, resize) => {
   let pipeline = sharp(input).removeAlpha().greyscale();
   if (resize) pipeline = pipeline.resize(resize.width, resize.height, { kernel: 'lanczos3' });
@@ -99,11 +104,35 @@ for (let i = 0; i < pairs.size(); i++) {
 }
 const inliers = new cv.Mat();
 // Model texture px → front photo px (the direction the UVs need).
-const affine = cv.estimateAffine2D(cv.matFromArray(to.length / 2, 1, cv.CV_32FC2, to), cv.matFromArray(from.length / 2, 1, cv.CV_32FC2, from), inliers, cv.RANSAC, 4 / shrink, 4000, .995);
+const homography = cv.findHomography(cv.matFromArray(to.length / 2, 1, cv.CV_32FC2, to), cv.matFromArray(from.length / 2, 1, cv.CV_32FC2, from), cv.RANSAC, 4 / shrink, inliers, 4000, .995);
 const kept = inliers.data.reduce((sum, v) => sum + (v ? 1 : 0), 0);
-const front = Array.from(affine.data64F);
-console.log('front: matches', from.length / 2, 'inliers', kept, 'affine', front.map((v) => +v.toFixed(4)));
 if (kept < 12) throw new Error('front photo did not register to the model texture');
+// The matches cluster in the middle of the top; refine over the whole top
+// (ECC, image to image), so its edges land on the model's outline too. The
+// photo is blurred to the texture's scale first.
+{
+  const indices = read(body.indices), topMask = cv.Mat.zeros(AH, AW, cv.CV_8UC1);
+  for (let t = 0; t < indices.length; t += 3) {
+    const tri = [indices[t], indices[t + 1], indices[t + 2]];
+    if (!tri.every((i) => facing(bodyMesh, bodyNormal, i) > .5)) continue;
+    const xy = tri.flatMap((i) => [Math.round(bodyUV[i * 2] * AW), Math.round(bodyUV[i * 2 + 1] * AH)]);
+    if (!tri.every((_, k) => xy[k * 2] >= frontRegion[0] && xy[k * 2] <= frontRegion[2] && xy[k * 2 + 1] >= frontRegion[1] && xy[k * 2 + 1] <= frontRegion[3])) continue;
+    const pts = cv.matFromArray(3, 1, cv.CV_32SC2, xy); cv.fillConvexPoly(topMask, pts, new cv.Scalar(255)); pts.delete();
+  }
+  const photo = await gray(frontPath), soft = new cv.Mat(), size = 2 * Math.round(1.2 / shrink) + 1;
+  cv.GaussianBlur(photo, soft, new cv.Size(size, size), 0);
+  const warp = cv.matFromArray(3, 3, cv.CV_32F, Array.from(homography.data64F));
+  // The mask marks valid pixels of the photo: the top, carried over by the RANSAC fit.
+  const photoMask = new cv.Mat();
+  cv.warpPerspective(topMask, photoMask, homography, new cv.Size(photo.cols, photo.rows), cv.INTER_NEAREST);
+  try {
+    const score = cv.findTransformECC(atlasGray, soft, warp, cv.MOTION_HOMOGRAPHY, new cv.TermCriteria(cv.TermCriteria_COUNT + cv.TermCriteria_EPS, 300, 1e-7), photoMask, 5);
+    console.log('front: ECC correlation', +score.toFixed(4));
+    homography.data64F.set(Array.from(warp.data32F));
+  } catch (error) { console.log('front: ECC did not converge, keeping the RANSAC fit', typeof error === 'number' ? cv.exceptionFromPtr(error).msg : error); }
+}
+const front = Array.from(homography.data64F);
+console.log('front: matches', from.length / 2, 'inliers', kept, 'homography', front.map((v) => +v.toFixed(5)));
 
 // ── 2. rear photo → the model's whole back, by silhouette ──
 // Body, neck and headstock seen from behind are projected flat onto the rear
@@ -325,7 +354,7 @@ const fit = {
   source: 'Guitar Musima 1655 HV Egor Letov by Kirill_lewis (sketchfab.com/klintonf81), Sketchfab Standard licence',
   frame: { scale, centre: [xc, yc, zc] },
   atlas: { width: AW, height: AH },
-  front: { affine: front, region: frontRegion, size: [frontMeta.width, frontMeta.height] },
+  front: { homography: front, region: frontRegion, size: [frontMeta.width, frontMeta.height] },
   rear: { body: rear, neck: rearNeck, head: rearHead, size: [RW, RH] },
   side: { body: sideBody, neck: sideNeck, head: sideHead, size: [SW, SH] },
   fretboard,
@@ -333,13 +362,61 @@ const fit = {
   strings: strings.map((s) => ({ tail: site(s.tail), saddle: site(s.saddle), nut: site(s.nut), post: site(s.post) })),
 };
 await writeFile('src/lib/guitarFit.json', JSON.stringify(fit, null, 1));
+
+if (process.argv.includes('--mask-front')) {
+  // The top's faces drawn into the photo through the homography, grown a
+  // little; everything else becomes dark lacquer.
+  const FW = frontMeta.width, FH = frontMeta.height, top = cv.Mat.zeros(FH, FW, cv.CV_8UC1);
+  const indices = read(body.indices), toPhoto = (i) => {
+    const x = bodyUV[i * 2] * AW, y = bodyUV[i * 2 + 1] * AH, w = front[6] * x + front[7] * y + front[8];
+    return [Math.round((front[0] * x + front[1] * y + front[2]) / w), Math.round((front[3] * x + front[4] * y + front[5]) / w)];
+  };
+  const inRegion = (i) => { const x = bodyUV[i * 2] * AW, y = bodyUV[i * 2 + 1] * AH; return x >= frontRegion[0] && x <= frontRegion[2] && y >= frontRegion[1] && y <= frontRegion[3]; };
+  // Only the outer top: the inside of the back faces +x too.
+  const bodyScene = toScene(bodyMesh), bodyPositions = read(body.attributes.POSITION);
+  const depthOf = (i) => bodyScene([bodyPositions[i * 3], bodyPositions[i * 3 + 1], bodyPositions[i * 3 + 2]])[0];
+  let topX = -Infinity; for (let i = 0; i < bodyPositions.length / 3; i++) topX = Math.max(topX, depthOf(i));
+  for (let t = 0; t < indices.length; t += 3) {
+    const tri = [indices[t], indices[t + 1], indices[t + 2]];
+    if (!tri.every((i) => facing(bodyMesh, bodyNormal, i) > .5 && inRegion(i) && depthOf(i) > topX - .05)) continue;
+    const pts = cv.matFromArray(3, 1, cv.CV_32SC2, tri.flatMap(toPhoto));
+    cv.fillConvexPoly(top, pts, new cv.Scalar(255)); pts.delete();
+  }
+  cv.dilate(top, top, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15)));
+  const { data, info } = await sharp(frontPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  // Where the model's outline runs a little wider than the guitar in the
+  // photo, the wall shows inside the mask. GrabCut separates the guitar from
+  // the wall along the edge (at half size): the top well inside the outline
+  // is guitar, well outside is wall, the band between is for it to decide.
+  const half = new cv.Size(Math.round(FW / 2), Math.round(FH / 2));
+  const image = new cv.Mat(FH, FW, cv.CV_8UC3); image.data.set(data);
+  const small = new cv.Mat(), smallTop = new cv.Mat(), sure = new cv.Mat(), maybe = new cv.Mat();
+  cv.resize(image, small, half, 0, 0, cv.INTER_AREA);
+  cv.resize(top, smallTop, half, 0, 0, cv.INTER_NEAREST);
+  cv.erode(smallTop, sure, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(31, 31)));
+  cv.dilate(smallTop, maybe, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(21, 21)));
+  const labels = new cv.Mat(half.height, half.width, cv.CV_8UC1);
+  for (let i = 0; i < half.width * half.height; i++) labels.data[i] = sure.data[i] ? cv.GC_FGD : smallTop.data[i] ? cv.GC_PR_FGD : maybe.data[i] ? cv.GC_PR_BGD : cv.GC_BGD;
+  const background = new cv.Mat(), foreground = new cv.Mat();
+  cv.grabCut(small, labels, new cv.Rect(0, 0, 1, 1), background, foreground, 5, cv.GC_INIT_WITH_MASK);
+  const guitar = new cv.Mat(half.height, half.width, cv.CV_8UC1);
+  for (let i = 0; i < half.width * half.height; i++) guitar.data[i] = labels.data[i] === cv.GC_FGD || labels.data[i] === cv.GC_PR_FGD ? 255 : 0;
+  cv.morphologyEx(guitar, guitar, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9)));
+  const full = new cv.Mat();
+  cv.resize(guitar, full, new cv.Size(FW, FH), 0, 0, cv.INTER_LINEAR);
+  for (let i = 0; i < FW * FH; i++) if (full.data[i] < 128) top.data[i] = 0;
+  cv.GaussianBlur(top, top, new cv.Size(9, 9), 0);
+  for (let i = 0; i < FW * FH; i++) { const a = top.data[i] / 255; for (let c = 0; c < 3; c++) data[i * 3 + c] = Math.round(data[i * 3 + c] * a + [13, 7, 8][c] * (1 - a)); }
+  await sharp(data, { raw: { width: info.width, height: info.height, channels: 3 } }).webp({ quality: 95 }).toFile(frontPath + '.tmp');
+  await (await import('node:fs/promises')).rename(frontPath + '.tmp', frontPath);
+  console.log('front: background around the top painted dark');
+}
 console.log('frame', fit.frame, 'string 0', fit.strings[0]);
 
 if (debug) {
   // The front photo pulled into model-texture space, half over the original.
-  const warped = new cv.Mat(), photo = await gray(frontPath), inverse = new cv.Mat();
-  cv.invertAffineTransform(affine, inverse);
-  cv.warpAffine(photo, warped, inverse, new cv.Size(AW, AH));
+  const warped = new cv.Mat(), photo = await gray(frontPath);
+  cv.warpPerspective(photo, warped, homography, new cv.Size(AW, AH), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
   const blend = Buffer.alloc(AW * AH * 3);
   for (let i = 0; i < AW * AH; i++) { blend[i * 3] = warped.data[i]; blend[i * 3 + 1] = atlasGray.data[i]; blend[i * 3 + 2] = atlasGray.data[i]; }
   await sharp(blend, { raw: { width: AW, height: AH, channels: 3 } }).png().toFile(`${debug}/guitar-front-fit.png`);

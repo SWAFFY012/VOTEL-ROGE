@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import fit from './guitarFit.json';
 import { smoothGeometry, smoothLevel } from './smoothGeometry';
+import { rebuildBody } from './bodyShell';
 
 // The Letov guitar as one reusable model: the Sketchfab model of his Musima
 // 1655 HV (Kirill_lewis, public/models/letov-guitar.glb), its facets rounded
@@ -30,6 +31,12 @@ export type GuitarModel = {
 
 type Affine = number[];
 const apply = (m: Affine, x: number, y: number) => [m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]];
+// A 3×3 homography, row by row: model texture px → front photo px.
+const perspective = (h: number[], x: number, y: number) => { const w = h[6] * x + h[7] * y + h[8]; return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]; };
+// The body is slimmer than the model's: its depth behind the top, scaled.
+const BODY_DEPTH = .65;
+// Radius of the rounded edges of the body, in the model's units.
+const EDGE_RADIUS = .2;
 
 // Fretboard: dark rosewood with fine lengthwise grain and pearl dots between
 // the model's own frets (3, 5, 7, 9, double 12, 15, 17, 19, 21). The canvas
@@ -105,44 +112,6 @@ function rimTexture(renderer: THREE.WebGLRenderer) {
   return texture;
 }
 
-// Marks the body's rim (side faces running from the top down to the back; the
-// f-hole walls are only the top's thickness) and gives it the rim texture's
-// coordinates: `rim` 1, uv = (around the body, top → back). Done before the
-// mesh is smoothed, so the coordinates are carried onto every small triangle.
-function markRim(source: THREE.BufferGeometry, matrix: THREE.Matrix4) {
-  const geometry = source.index ? source.toNonIndexed() : source.clone();
-  const position = geometry.attributes.position, count = position.count;
-  const points = Array.from({ length: count }, (_, i) => new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(matrix));
-  let top = -Infinity, bottom = Infinity, cy = 0, cz = 0;
-  points.forEach((p) => { top = Math.max(top, p.x); bottom = Math.min(bottom, p.x); cy += p.y / count; cz += p.z / count; });
-  const depth = top - bottom, rim = new Float32Array(count), uv = new Float32Array(count * 2);
-  if (geometry.attributes.uv) uv.set(geometry.attributes.uv.array as Float32Array);
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), rimPoints: number[] = [];
-  for (let t = 0; t < count; t += 3) {
-    const [p, q, r] = [points[t], points[t + 1], points[t + 2]];
-    const n = a.subVectors(q, p).cross(b.subVectors(r, p)).normalize();
-    const span = Math.max(p.x, q.x, r.x) - Math.min(p.x, q.x, r.x);
-    if (Math.abs(n.x) < .35 && span > depth * .3) { rim[t] = rim[t + 1] = rim[t + 2] = 1; rimPoints.push(t, t + 1, t + 2); }
-  }
-  // v: from the top's edge to the back's edge right there (the rim is deeper
-  // at the lower bout); u: the angle around the body's centre.
-  const around = (p: THREE.Vector3) => (Math.atan2(p.y - cy, p.z - cz) / (2 * Math.PI) + .5) * RIM_REPEATS;
-  for (let t = 0; t < rimPoints.length; t += 3) {
-    const corners = [rimPoints[t], rimPoints[t + 1], rimPoints[t + 2]];
-    const us = corners.map((i) => around(points[i]));
-    // Across the seam of the angle, keep the triangle on one side.
-    if (Math.max(...us) - Math.min(...us) > RIM_REPEATS / 2) us.forEach((u, k) => { if (u < RIM_REPEATS / 2) us[k] = u + RIM_REPEATS; });
-    corners.forEach((i, k) => {
-      let back = top;
-      for (const j of rimPoints) if (points[j].x < back && Math.hypot(points[j].y - points[i].y, points[j].z - points[i].z) < .2) back = points[j].x;
-      uv[i * 2] = us[k]; uv[i * 2 + 1] = back < top - depth * .2 ? Math.min(1, Math.max(0, (top - points[i].x) / (top - back))) : 0;
-    });
-  }
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geometry.setAttribute('rim', new THREE.BufferAttribute(rim, 1));
-  return geometry;
-}
-
 // The tuners. In the model each shaft runs through the middle of the
 // headstock's thickness, so the buttons stick straight out of its edges with
 // nothing behind them. On the real guitar the machines sit on the back: a
@@ -211,7 +180,9 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     return texture;
   };
   const lacquer = (map: THREE.Texture) => own(new THREE.MeshPhysicalMaterial({ map, roughness: lit ? .48 : .55, clearcoat: lit ? 1 : .6, clearcoatRoughness: .14 }));
-  const frontMaterial = lacquer(photo('/guitar-front-4k.webp'));
+  // The front photo already carries the lacquer's own highlights: a calmer,
+  // satin coat on top, or the room's window turns the whole top milky.
+  const frontMaterial = own(new THREE.MeshPhysicalMaterial({ map: photo('/guitar-front-4k.webp'), roughness: .72, clearcoat: lit ? .35 : .25, clearcoatRoughness: .3 }));
   // The arched back catches the overhead lamp head-on: a softer, older lacquer
   // keeps that from burning out to white.
   const rearMaterial = own(new THREE.MeshPhysicalMaterial({ map: photo('/guitar-back-4k.webp'), roughness: .66, clearcoat: .3, clearcoatRoughness: .4 }));
@@ -270,18 +241,35 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     const meshes: THREE.Mesh[] = [];
     model.traverse((object) => { if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh); });
     const named = (name: string) => meshes.find((mesh) => (mesh.material as THREE.Material).name === name);
-    const headMesh = named('Material.002'), tunerMesh = named('Material.008');
+    const headMesh = named('Material.002'), tunerMesh = named('Material.008'), bodyMesh = named('Material.001');
+    // Slimmer body: the body and the block inside it pressed towards the top's
+    // plane, which stays where it is (strings, hardware and photo fit it).
+    if (bodyMesh) {
+      const position = bodyMesh.geometry.attributes.position, v = new THREE.Vector3();
+      let top = -Infinity;
+      for (let i = 0; i < position.count; i++) top = Math.max(top, v.fromBufferAttribute(position, i).applyMatrix4(bodyMesh.matrixWorld).x);
+      for (const mesh of [bodyMesh, named('Material.004')]) {
+        if (!mesh) continue;
+        const points = mesh.geometry.attributes.position, inverse = mesh.matrixWorld.clone().invert();
+        for (let i = 0; i < points.count; i++) {
+          v.fromBufferAttribute(points, i).applyMatrix4(mesh.matrixWorld); v.x = top + (v.x - top) * BODY_DEPTH;
+          v.applyMatrix4(inverse); points.setXYZ(i, v.x, v.y, v.z);
+        }
+        points.needsUpdate = true; mesh.geometry.computeBoundingSphere();
+      }
+    }
     if (headMesh && tunerMesh) mountTuners(model, headMesh, tunerMesh, own(new THREE.MeshStandardMaterial({ color: 0x8e887d, metalness: .85, roughness: .36 })), own);
     meshes.forEach((mesh) => {
       const material = mesh.material as THREE.MeshStandardMaterial;
       owned.push(mesh.geometry, material); if (material.map) owned.push(material.map);
       // The model's own strings: replaced by the site's bendable ones.
       if (material.name === 'Material.003') { mesh.visible = false; return; }
-      // The model is low-poly: round its facets off before anything is fitted.
-      const original = mesh.geometry, isBody = material.name === 'Material.001';
-      const prepared = isBody ? markRim(original, mesh.matrixWorld) : original;
-      mesh.geometry = own(smoothGeometry(prepared, mesh.matrixWorld, smoothLevel((original.index ?? original.attributes.position).count / 3), { band: sideBand, round: .9 }));
-      if (prepared !== original) prepared.dispose();
+      // The model is low-poly: the body's outside is rebuilt smooth and round
+      // (bodyShell), every other part has its facets rounded off.
+      const original = mesh.geometry, triangles = (original.index ?? original.attributes.position).count / 3;
+      mesh.geometry = own(material.name === 'Material.001'
+        ? rebuildBody(original, mesh.matrixWorld, { radius: EDGE_RADIUS, rimRepeats: RIM_REPEATS })
+        : smoothGeometry(original, mesh.matrixWorld, smoothLevel(triangles), { band: sideBand, round: .9 }));
       original.dispose();
       // The block inside the hollow body, seen through the f-holes: dark.
       if (material.name === 'Material.004') { mesh.material = own(new THREE.MeshStandardMaterial({ color: 0x0b0606, roughness: .9 })); return; }
@@ -312,11 +300,11 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
         tri.forEach((i) => { const n = facing(i); face += n.x / 3; sideways += Math.abs(n.z) / 3; });
         let target = 0;
         if (body && rimMark?.getX(t) === 1) {
-          // The rim: its own texture, coordinates set by markRim.
+          // The rim: its own texture, coordinates set by rebuildBody.
           target = 4;
         } else if (body && face > .5 && tri.every((i) => inside(i, fit.front.region))) {
           target = 1;
-          tri.forEach((i) => { const [tx, ty] = tex(i); const [x, y] = apply(fit.front.affine, tx, ty); uv.setXY(i, x / fit.front.size[0], y / fit.front.size[1]); });
+          tri.forEach((i) => { const [tx, ty] = tex(i); const [x, y] = perspective(fit.front.homography, tx, ty); uv.setXY(i, x / fit.front.size[0], y / fit.front.size[1]); });
         } else if (head && face > .5) {
           // Headstock face: the archive photo, box to box.
           target = 1;
