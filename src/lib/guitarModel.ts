@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import fit from './guitarFit.json';
+import { smoothGeometry, smoothLevel } from './smoothGeometry';
 
 // The Letov guitar as one reusable model: the Sketchfab model of his Musima
-// 1655 HV (Kirill_lewis, public/models/letov-guitar.glb) with the sharp front
-// photograph on its top, the rear photograph over its whole back (body, neck,
+// 1655 HV (Kirill_lewis, public/models/letov-guitar.glb), its facets rounded
+// off (smoothGeometry), with the front photograph on its top, the rear photograph over its whole back (body, neck,
 // headstock), the profile photograph on its sides, the archive photo on the
 // headstock face and a rosewood
 // fretboard with dots between its frets; the strings are the site's own, laid
@@ -69,6 +70,78 @@ function rosewood(renderer: THREE.WebGLRenderer) {
   return texture;
 }
 
+// The body's rim: dark aged lacquer between two cream bindings, unrolled
+// along the outline (u around the body, v from the top's edge to the back's).
+// Its own texture rather than a photo projected from the side, which smears
+// wherever the rim turns to face up or down.
+const RIM_REPEATS = 6;
+function rimTexture(renderer: THREE.WebGLRenderer) {
+  const width = 1024, height = 256, canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const pen = canvas.getContext('2d')!;
+  let seed = 11;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const lacquer = pen.createLinearGradient(0, 0, 0, height);
+  lacquer.addColorStop(0, '#16090a'); lacquer.addColorStop(.5, '#3b0f10'); lacquer.addColorStop(1, '#16090a');
+  pen.fillStyle = lacquer; pen.fillRect(0, 0, width, height);
+  // Wear: faint lighter scuffs along the rim, tiled across the seam.
+  for (let i = 0; i < 260; i++) {
+    const x = random() * width, y = height * (.12 + random() * .76), w = 4 + random() * 40;
+    pen.fillStyle = `rgba(${120 + random() * 60},${50 + random() * 30},${40 + random() * 20},${.04 + random() * .1})`;
+    for (const shift of [0, -width, width]) pen.fillRect(x + shift, y, w, .6 + random() * 1.6);
+  }
+  // Bindings: cream, aged at the outer edge, with a black purfling line inside.
+  const binding = (y0: number, y1: number) => {
+    const g = pen.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, '#b9a27a'); g.addColorStop(.5, '#e2d3ae'); g.addColorStop(1, '#c8b48c');
+    pen.fillStyle = g; pen.fillRect(0, y0, width, y1 - y0);
+  };
+  binding(0, height * .055); pen.fillStyle = '#0b0606'; pen.fillRect(0, height * .055, width, height * .02);
+  binding(height * .945, height); pen.fillStyle = '#0b0606'; pen.fillRect(0, height * .925, width, height * .02);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = THREE.RepeatWrapping;
+  texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
+  return texture;
+}
+
+// Marks the body's rim (side faces running from the top down to the back; the
+// f-hole walls are only the top's thickness) and gives it the rim texture's
+// coordinates: `rim` 1, uv = (around the body, top → back). Done before the
+// mesh is smoothed, so the coordinates are carried onto every small triangle.
+function markRim(source: THREE.BufferGeometry, matrix: THREE.Matrix4) {
+  const geometry = source.index ? source.toNonIndexed() : source.clone();
+  const position = geometry.attributes.position, count = position.count;
+  const points = Array.from({ length: count }, (_, i) => new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(matrix));
+  let top = -Infinity, bottom = Infinity, cy = 0, cz = 0;
+  points.forEach((p) => { top = Math.max(top, p.x); bottom = Math.min(bottom, p.x); cy += p.y / count; cz += p.z / count; });
+  const depth = top - bottom, rim = new Float32Array(count), uv = new Float32Array(count * 2);
+  if (geometry.attributes.uv) uv.set(geometry.attributes.uv.array as Float32Array);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), rimPoints: number[] = [];
+  for (let t = 0; t < count; t += 3) {
+    const [p, q, r] = [points[t], points[t + 1], points[t + 2]];
+    const n = a.subVectors(q, p).cross(b.subVectors(r, p)).normalize();
+    const span = Math.max(p.x, q.x, r.x) - Math.min(p.x, q.x, r.x);
+    if (Math.abs(n.x) < .35 && span > depth * .3) { rim[t] = rim[t + 1] = rim[t + 2] = 1; rimPoints.push(t, t + 1, t + 2); }
+  }
+  // v: from the top's edge to the back's edge right there (the rim is deeper
+  // at the lower bout); u: the angle around the body's centre.
+  const around = (p: THREE.Vector3) => (Math.atan2(p.y - cy, p.z - cz) / (2 * Math.PI) + .5) * RIM_REPEATS;
+  for (let t = 0; t < rimPoints.length; t += 3) {
+    const corners = [rimPoints[t], rimPoints[t + 1], rimPoints[t + 2]];
+    const us = corners.map((i) => around(points[i]));
+    // Across the seam of the angle, keep the triangle on one side.
+    if (Math.max(...us) - Math.min(...us) > RIM_REPEATS / 2) us.forEach((u, k) => { if (u < RIM_REPEATS / 2) us[k] = u + RIM_REPEATS; });
+    corners.forEach((i, k) => {
+      let back = top;
+      for (const j of rimPoints) if (points[j].x < back && Math.hypot(points[j].y - points[i].y, points[j].z - points[i].z) < .2) back = points[j].x;
+      uv[i * 2] = us[k]; uv[i * 2 + 1] = back < top - depth * .2 ? Math.min(1, Math.max(0, (top - points[i].x) / (top - back))) : 0;
+    });
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geometry.setAttribute('rim', new THREE.BufferAttribute(rim, 1));
+  return geometry;
+}
+
 // lit: the photographed top and back respond to scene lights as lacquered
 // wood (clearcoat); without it they are a little softer, for the dark scroll scene.
 export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () => void, { lit = false } = {}): GuitarModel {
@@ -97,6 +170,7 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
   const sideMaterial = own(new THREE.MeshPhysicalMaterial({ map: photo('/guitar-side-4k.webp'), roughness: .6, clearcoat: .4, clearcoatRoughness: .35 }));
   const headMaterial = lacquer(photo('/letov-guitars.png'));
   const rim = own(new THREE.MeshPhysicalMaterial({ color: 0x1c0a0b, roughness: .42, clearcoat: 1, clearcoatRoughness: .18 }));
+  const rimSide = own(new THREE.MeshPhysicalMaterial({ map: own(rimTexture(renderer)), roughness: .5, clearcoat: .8, clearcoatRoughness: .22 }));
   const fretboard = own(new THREE.MeshStandardMaterial({ map: own(rosewood(renderer)), roughness: .62 }));
 
   // ── Strings: tuner post → nut → saddle → tailpiece, thickest first ──
@@ -142,6 +216,8 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     const model = gltf.scene;
     model.updateMatrixWorld(true);
     const normal = new THREE.Vector3(), normalMatrix = new THREE.Matrix3(), point = new THREE.Vector3();
+    // The top faces +x here: faces across it are the rim and the sides of neck and headstock.
+    const sideBand = new THREE.Vector3(1, 0, 0);
     const meshes: THREE.Mesh[] = [];
     model.traverse((object) => { if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh); });
     meshes.forEach((mesh) => {
@@ -149,15 +225,23 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
       owned.push(mesh.geometry, material); if (material.map) owned.push(material.map);
       // The model's own strings: replaced by the site's bendable ones.
       if (material.name === 'Material.003') { mesh.visible = false; return; }
+      // The model is low-poly: round its facets off before anything is fitted.
+      const original = mesh.geometry, isBody = material.name === 'Material.001';
+      const prepared = isBody ? markRim(original, mesh.matrixWorld) : original;
+      mesh.geometry = own(smoothGeometry(prepared, mesh.matrixWorld, smoothLevel((original.index ?? original.attributes.position).count / 3), { band: sideBand, round: .9 }));
+      if (prepared !== original) prepared.dispose();
+      original.dispose();
       // The block inside the hollow body, seen through the f-holes: dark.
       if (material.name === 'Material.004') { mesh.material = own(new THREE.MeshStandardMaterial({ color: 0x0b0606, roughness: .9 })); return; }
       const body = material.name === 'Material.001', head = material.name === 'Material.002', neck = material.name === 'Material.005';
       if (!body && !head && !neck) return;
       // Split the textured mesh by material: 0 the model's own (dark lacquer on
       // the body), 1 the face (top photo, headstock face, fretboard), 2 the rear
-      // photo, 3 the profile photo.
+      // photo, 3 the profile photo, 4 the body's rim. Faces are sorted by the
+      // flat normal of the model's own triangle: the smoothed normals lean
+      // round the edges and would pull the rim's edges onto the top and back.
       const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
-      const position = geometry.attributes.position, normals = geometry.attributes.normal, uv = geometry.attributes.uv;
+      const position = geometry.attributes.position, normals = geometry.attributes.flat, uv = geometry.attributes.uv, rimMark = geometry.attributes.rim;
       normalMatrix.getNormalMatrix(mesh.matrixWorld);
       const tex = (i: number) => [uv.getX(i) * fit.atlas.width, uv.getY(i) * fit.atlas.height];
       const inside = (i: number, [x0, y0, x1, y1]: number[]) => { const [x, y] = tex(i); return x >= x0 && x <= x1 && y >= y0 && y <= y1; };
@@ -169,13 +253,16 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
       // And the profile photo from the model's (x, y), seen from the side.
       const sideFit = body ? fit.side.body : neck ? fit.side.neck : fit.side.head;
       const profile = (i: number) => { const p = scene(i); uv.setXY(i, (sideFit[0] * p.x + sideFit[2]) / fit.side.size[0], (sideFit[4] * p.y + sideFit[5]) / fit.side.size[1]); };
-      const groups: number[][] = [[], [], [], []];
+      const groups: number[][] = [[], [], [], [], []];
       for (let t = 0; t < position.count; t += 3) {
         const tri = [t, t + 1, t + 2];
         let face = 0, sideways = 0;
         tri.forEach((i) => { const n = facing(i); face += n.x / 3; sideways += Math.abs(n.z) / 3; });
         let target = 0;
-        if (body && face > .5 && tri.every((i) => inside(i, fit.front.region))) {
+        if (body && rimMark?.getX(t) === 1) {
+          // The rim: its own texture, coordinates set by markRim.
+          target = 4;
+        } else if (body && face > .5 && tri.every((i) => inside(i, fit.front.region))) {
           target = 1;
           tri.forEach((i) => { const [tx, ty] = tex(i); const [x, y] = apply(fit.front.affine, tx, ty); uv.setXY(i, x / fit.front.size[0], y / fit.front.size[1]); });
         } else if (head && face > .5) {
@@ -194,10 +281,9 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
         } else if (!body || face < -.2) {
           // Back of the body, neck and headstock.
           target = 2; tri.forEach((i) => project(i, rearFit, fit.rear.size));
-        } else if (face < .5) {
-          // The body's rim, with its binding: the profile photo.
-          target = 3; tri.forEach(profile);
         }
+        // Anything else on the body facing sideways (the f-hole walls, the
+        // neck pocket) stays dark lacquer.
         groups[target].push(t);
       }
       // Rebuild the attributes grouped by material.
@@ -214,7 +300,7 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
       mesh.geometry = grouped;
       // Leftovers on the body (inside the f-holes) stay dark lacquer: the model
       // texture only has the photo's background there.
-      mesh.material = [body ? rim : material, head ? headMaterial : neck ? fretboard : frontMaterial, rearMaterial, sideMaterial];
+      mesh.material = [body ? rim : material, head ? headMaterial : neck ? fretboard : frontMaterial, rearMaterial, sideMaterial, rimSide];
     });
     model.position.set(-centre[0], -centre[1], -centre[2]);
     if (disposed) return;
