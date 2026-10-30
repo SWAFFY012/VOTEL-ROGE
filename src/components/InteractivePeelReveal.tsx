@@ -3,7 +3,8 @@ import gsap from 'gsap';
 import { createPeelCurl, type CurlState } from './peelCurl';
 
 type Point = { x:number; y:number };
-type Props = { active:boolean; progress:number; onProgressChange:(progress:number)=>void };
+// onSideChange: 1 when the sheet is pulled from a right corner, -1 from a left one.
+type Props = { active:boolean; progress:number; onProgressChange:(progress:number)=>void; onSideChange?:(side:number)=>void };
 const clamp=(v:number)=>Math.max(0,Math.min(1,v));
 const dot=(a:Point,b:Point)=>a.x*b.x+a.y*b.y;
 const rectangle:Point[]=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
@@ -21,9 +22,11 @@ function halfPlane(points:Point[],normal:Point,crease:number){
   return result;
 }
 
-export default function InteractivePeelReveal({active,progress,onProgressChange}:Props){
+export default function InteractivePeelReveal({active,progress,onProgressChange,onSideChange}:Props){
   const drag=useRef<{id:number;start:Point;progress:number;direction:Point;locked:boolean}|null>(null);
   const [direction,setDirection]=useState<Point>({x:Math.SQRT1_2,y:Math.SQRT1_2});
+  // The direction points inward from the grabbed corner.
+  useEffect(()=>{onSideChange?.(direction.x<0?1:-1);},[direction.x<0,onSideChange]);
   const [dragging,setDragging]=useState(false);
   const [hovering,setHovering]=useState(false);
   const [size,setSize]=useState({width:innerWidth,height:innerHeight});

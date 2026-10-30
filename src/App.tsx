@@ -34,7 +34,7 @@ export default function App() {
   const [loaded,setLoaded]=useState(atFinal.current),[heroReady,setHeroReady]=useState(false),[peelVisible,setPeelVisible]=useState(false),[peelProgress,setPeelProgress]=useState(0);
   const transitionMotion=useRef({progress:0});
   const heroReadyRef=useRef(false),peelProgressRef=useRef(0),frameImage=useRef<HTMLImageElement>(null),faceSwap=useRef<HTMLImageElement>(null);
-  const {music,hover,click,guitar,toggle,soundEnabled,needsInteraction,setSoundEnabled,playEffect}=useSiteAudio();
+  const {setScene,setPan,hover,click,guitar,toggle,soundEnabled,needsInteraction,setSoundEnabled,playEffect}=useSiteAudio();
   const [note,setNote]=useState(-1);
   const noteBox=useRef<HTMLDivElement>(null);
   const blink=useRef<BlinkControl|null>(null);
@@ -59,7 +59,12 @@ export default function App() {
     setLoaded(true);
     requestAnimationFrame(()=>ScrollTrigger.refresh());
   },[]);
-  const changePeel=useCallback((progress:number)=>{peelProgressRef.current=progress;setPeelProgress(progress);},[]);
+  // Letov's track follows the peel across the ears: it starts on the side of
+  // the corner being pulled (where the photo opens first) and settles in the
+  // centre once the whole sheet is off.
+  const peelSide=useRef(1);
+  const changePeel=useCallback((progress:number)=>{peelProgressRef.current=progress;setPeelProgress(progress);setPan('letov',peelSide.current*(1-progress));},[setPan]);
+  const changePeelSide=useCallback((side:number)=>{peelSide.current=side;setPan('letov',side*(1-peelProgressRef.current));},[setPan]);
   useEffect(()=>{
     // The hero film plays through on its own (no scroll scrubbing); its last
     // frame hands over to the peelable flower sheet.
@@ -315,6 +320,11 @@ export default function App() {
           showChapter(!sceneActive?-1:guitarP>=.235&&guitarP<.40?0:guitarP>=.40&&guitarP<.62?1:p>=.555&&p<.67?3:p>=.67&&p<.785?4:p>=.785&&p<.90?5:-1);
           if(sceneActive&&p>=.93)runFinale(true);
         }else if(finale==='done'&&performance.now()>settleUntil&&p<.87)runFinale(false);
+        // Music: MIZERY under the film and the flower sheet; «Летов 88» from
+        // the first pull of the sheet; «Сто лет одиночества» once the child
+        // cover has mostly arrived; MIZERY again when the eye opens on the
+        // flower cover at the end.
+        setScene(finalCover.classList.contains('is-shown')?'misery':transitionMotion.current.progress>=.45?'solitude':peelProgressRef.current>.01||sceneActive?'letov':'misery');
         if(fastForward&&finale==='done'&&cardsReveal.progress()===1){fastForward=false;gsap.globalTimeline.timeScale(1);}
         if(motion.current.reduced)tl.progress(1);
       };tick();
@@ -341,7 +351,7 @@ export default function App() {
       <div className="backdrop" aria-hidden="true"><img src="/cover.jpg" alt=""/><video className="intro-film" autoPlay ref={video} src="/intro.mp4" muted playsInline preload="auto" onError={e=>{e.currentTarget.style.display='none';}}/><img ref={frameImage} className={`hero-scroll-frame${heroReady?' is-ready':''}`} src="/peel/frames/frame_0100.webp" alt=""/><img ref={faceSwap} className={`hero-face-swap${heroReady?' is-ready':''}`} src="/peel/letov-hole.webp?v=7" alt=""/></div>
       <MeridianTransition motion={transitionMotion}/>
       <div className="final-cover" aria-hidden="true"><img src="/peel/cover-flowers.jpg" alt=""/></div>
-      <InteractivePeelReveal active={peelVisible} progress={peelProgress} onProgressChange={changePeel}/>
+      <InteractivePeelReveal active={peelVisible} progress={peelProgress} onProgressChange={changePeel} onSideChange={changePeelSide}/>
       <div className="portal-window" aria-hidden="true"><img src="/cover.jpg" alt=""/><video ref={portalVideo} src="/intro.mp4" muted playsInline preload="auto"/></div>
       <div className="portal-copy" aria-hidden="true"><h2><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">где</i></b> <b className="word-mask"><span className="animated-word">ПАМЯТЬ</span></b></span></span><span className="reveal-line"><span><b className="word-mask"><i className="animated-word">становится</i></b> <b className="word-mask"><span className="animated-word">ЗВУКОМ</span></b></span></span></h2></div>
       <div className="brand-lockup"><h1 className="wordmark"><span className="hero-mask"><span aria-label="VOTEL-ROGE">{'VOTEL-ROGE'.split('').map((letter,index)=><span key={index} className="hero-glyph" aria-hidden="true" style={{filter:'url(#glyph-'+index+')'}}>{letter}</span>)}</span></span></h1><p className="subtitle"><span className="hero-mask"><i className="hero-word">Павел Лугинин</i></span></p></div>
@@ -362,7 +372,6 @@ export default function App() {
     <CursorRing/>
     <audio ref={guitar} src="/audio/guitar.wav" preload="auto" hidden/>
     <audio ref={toggle} src="/audio/card-click.mp3" preload="auto" hidden/>
-    <audio ref={music} src="/audio/background.wav" loop preload="auto" hidden/>
     <audio ref={hover} src="/audio/card-hover.mp3" preload="auto" hidden/>
     <audio ref={click} src="/audio/card-click.mp3" preload="auto" hidden/>
     {needsInteraction&&soundEnabled&&<div className="sound-hint" role="status">Нажмите, чтобы включить музыку</div>}

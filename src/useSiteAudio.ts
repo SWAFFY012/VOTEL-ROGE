@@ -1,60 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
+import { createMusicMix, type MusicMix, type Scene } from '@/lib/musicMix';
 
 export function useSiteAudio() {
-  const music = useRef<HTMLAudioElement>(null);
+  const music = useRef<MusicMix | null>(null);
+  music.current ??= createMusicMix();
   const hover = useRef<HTMLAudioElement>(null);
   const click = useRef<HTMLAudioElement>(null);
   const guitar = useRef<HTMLAudioElement>(null);
   const toggle = useRef<HTMLAudioElement>(null);
   const enabled = useRef(true);
   const request = useRef(0);
-  const audioGraph=useRef<{context:AudioContext;gain:GainNode}|null>(null);
-  const envelope=useRef({from:0,to:0,start:0,duration:4});
-  const ramp=useCallback((target:number)=>{
-    const track=music.current;if(!track)return;
-    if(!audioGraph.current){
-      const context=new AudioContext(),gain=context.createGain();
-      context.createMediaElementSource(track).connect(gain);gain.connect(context.destination);
-      const initial=track.paused?0:track.volume;
-      gain.gain.value=initial;audioGraph.current={context,gain};track.volume=1;
-      envelope.current={from:initial,to:initial,start:context.currentTime,duration:4};
-    }
-    const {context,gain}=audioGraph.current;
-    void context.resume();
-    const now=context.currentTime;
-    const previous=envelope.current;
-    const t=Math.min(1,Math.max(0,(now-previous.start)/previous.duration));
-    const current=previous.from+(previous.to-previous.from)*(t*t*(3-2*t));
-    gain.gain.cancelScheduledValues(now);
-    gain.gain.setValueAtTime(current,now);
-    const curve=Float32Array.from({length:129},(_,i)=>{const p=i/128;return current+(target-current)*p*p*(3-2*p);});
-    gain.gain.setValueCurveAtTime(curve,now,4);
-    envelope.current={from:current,to:target,start:now,duration:4};
-  },[]);
   const [soundEnabled, setEnabled] = useState(true);
   const [needsInteraction, setNeedsInteraction] = useState(false);
 
   const startMusic = useCallback((version: number) => {
-    const track = music.current;
-    if (!track || !enabled.current) return;
-    if (track.paused && !audioGraph.current) track.volume = 0;
+    const mix = music.current;
+    if (!mix || !enabled.current) return;
     // Browsers may require an interaction before allowing audible playback.
-    void track.play().then(() => {
+    void mix.play().then(() => {
       if (version !== request.current || !enabled.current) return;
       setNeedsInteraction(false);
-      gsap.killTweensOf(track);
-      ramp(0.3);
+      mix.fadeIn();
     }).catch(() => {
       if (version === request.current && enabled.current) setNeedsInteraction(true);
     });
-  }, [ramp]);
+  }, []);
 
   const setSoundEnabled = useCallback((next: boolean) => {
-    const track = music.current;
-    if (!track) return;
+    const mix = music.current;
+    if (!mix) return;
     if (next === enabled.current) {
-      if (next && track.paused) {
+      if (next && mix.paused) {
         if (toggle.current) {
           toggle.current.volume = 0.2;
           toggle.current.currentTime = 0;
@@ -74,18 +51,17 @@ export function useSiteAudio() {
     enabled.current = next;
     setEnabled(next);
     if (!next) setNeedsInteraction(false);
-    gsap.killTweensOf(track);
     if (next) {
       startMusic(version);
     } else {
       [hover.current, click.current, guitar.current].forEach(effect => {
         if (effect) { effect.pause(); effect.currentTime = 0; }
       });
-      ramp(0);
+      mix.fadeOut();
       // Silence is scheduled on the audio clock. No wall-clock pause may cut
       // the envelope short if the context was suspended in a background tab.
     }
-  }, [startMusic,ramp]);
+  }, [startMusic]);
 
   const playEffect = useCallback((kind: 'hover' | 'click' | 'guitar') => {
     if (!enabled.current) return;
@@ -101,7 +77,8 @@ export function useSiteAudio() {
   }, []);
 
   useEffect(() => {
-    const tracks = [music.current, hover.current, click.current, guitar.current, toggle.current];
+    const mix = music.current;
+    const tracks = [hover.current, click.current, guitar.current, toggle.current];
     const version = ++request.current;
     startMusic(version);
     const resume = (event: Event) => {
@@ -122,8 +99,14 @@ export function useSiteAudio() {
       tracks.forEach(track => {
         if (track) { gsap.killTweensOf(track); track.pause(); }
       });
+      mix?.dispose();
+      music.current = null;
     };
   }, [startMusic]);
 
-  return { music, hover, click, guitar, toggle, soundEnabled, needsInteraction, setSoundEnabled, playEffect };
+  // Which track plays, and where Letov's track sits between the ears.
+  const setScene = useCallback((scene: Scene) => { music.current?.setScene(scene); }, []);
+  const setPan = useCallback((scene: Scene, pan: number) => { music.current?.setPan(scene, pan); }, []);
+
+  return { setScene, setPan, hover, click, guitar, toggle, soundEnabled, needsInteraction, setSoundEnabled, playEffect };
 }

@@ -3,3 +3,8 @@ dist/
 *.log
 test-results/
 .claude/
+
+# Source WAV masters (too large for GitHub); the site uses public/audio/*.m4a
+/MIZERY (site version).wav
+/Летов 88.wav
+/Сто лет одиночества.wav

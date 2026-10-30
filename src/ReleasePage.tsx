@@ -38,7 +38,7 @@ type Controls = { zoomOut: () => void; zoomBy: (factor: number) => void; pluck: 
 // photo's one-point perspective. From home it is exactly the photo; as the
 // camera moves in or sideways, near and far parts of the room shift against
 // each other like a real room. The mesh reaches a little past the photo so a
-// moved camera never sees its edge (the border pixels just stretch, blurred).
+// moved camera never sees its edge (past the border the photo is mirrored).
 const roomVertex = `
   uniform vec2 uHalf; uniform float uOffsetY, uBack, uHome;
   varying vec2 vUv;
@@ -56,31 +56,23 @@ const roomVertex = `
     depth = max(depth, 2.);
     gl_Position = projectionMatrix * viewMatrix * vec4(ray * depth, uHome - depth, 1.);
   }`;
-// Daylight from the window: it falls off into the room, breathes with the
-// clouds (uLight) and glows around the frame; the room is out of focus
-// (uBlur, a disc blur radius in photo pixels), more so the closer the camera.
+// Daylight from the window: it falls off into the room and breathes with the
+// clouds (uLight). The room stays sharp at every distance: one plain sample
+// of the photo, no blur, no haze.
 const roomFragment = `
-  uniform sampler2D uPhoto; uniform float uLight, uBlur;
+  uniform sampler2D uPhoto; uniform float uLight;
   varying vec2 vUv;
   const vec2 windowCentre = vec2(.495, .65);
   void main(){
-    vec2 uv = clamp(vUv, 0., 1.);
-    // 24 taps on a golden-angle disc, from a softened mip level.
-    vec3 photo = vec3(0.);
-    for (int i = 0; i < 24; i++) {
-      float a = float(i) * 2.39996, r = sqrt((float(i) + .5) / 24.) * uBlur;
-      photo += texture2D(uPhoto, uv + vec2(cos(a) / 1671., sin(a) / 941.) * r, 2.).rgb;
-    }
-    photo /= 24.;
-    photo = mix(vec3(dot(photo, vec3(.299, .587, .114))), photo, .82);
-    vec3 haze = texture2D(uPhoto, uv, 6.).rgb;
+    // Mirrored past the photo's edge, so a moved camera sees no smeared border.
+    vec2 uv = 1. - abs(1. - abs(vUv));
+    vec3 photo = texture2D(uPhoto, uv).rgb;
     vec2 d = (uv - windowCentre) * vec2(1.5, 1.);
     float near = exp(-dot(d, d) * 3.5);
-    vec3 colour = photo * mix(.48, .9, near) * mix(1., uLight, .3 + .7 * near);
-    colour += max(haze - .62, 0.) * .5 * uLight * near;
+    vec3 colour = photo * mix(.6, .95, near) * mix(1., uLight, .3 + .7 * near);
     // Keep the panes from burning out: the trees behind the glass show, and
     // the light rays added on top carry the glare.
-    colour = min(colour, vec3(.72)) + max(colour - .72, 0.) * .4;
+    colour = min(colour, vec3(.8)) + max(colour - .8, 0.) * .5;
     vec2 v = vUv - .5;
     colour *= 1. - dot(v, v) * .7;
     gl_FragColor = vec4(colour, 1.);
@@ -188,7 +180,7 @@ export default function ReleasePage() {
     photo.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const roomUniforms = {
       uPhoto: { value: photo }, uHalf: { value: new THREE.Vector2(1, 1) }, uOffsetY: { value: 0 },
-      uBack: { value: 15 }, uHome: { value: home.z }, uLight: { value: 1 }, uBlur: { value: 5 },
+      uBack: { value: 15 }, uHome: { value: home.z }, uLight: { value: 1 },
     };
     const roomGeometry = new THREE.PlaneGeometry(1, 1, 192, 108);
     const roomUv = roomGeometry.attributes.uv as THREE.BufferAttribute;
@@ -537,8 +529,6 @@ export default function ReleasePage() {
       // Daylight: clouds pass, and everything the window lights follows.
       const light = reduced ? 1 : daylight(t);
       roomUniforms.uLight.value = light;
-      // Depth of field: the room softens as the camera closes in.
-      roomUniforms.uBlur.value = 5 + (1 - distance) * 14 + ease * 8;
       windowLight.intensity = 4.2 * light * light;
       sky.intensity = .38 * (.8 + .2 * light);
       // The shadow follows the guitar's turn: wide face-on, narrow edge-on.
@@ -550,7 +540,7 @@ export default function ReleasePage() {
       // Rays from wherever the window is on screen now.
       lightSource.copy(windowCentre).project(camera);
       rayUniforms.uSource.value.set(lightSource.x * .5 + .5, lightSource.y * .5 + .5);
-      rayUniforms.uStrength.value = 2.4 * light * light * (1 - ease * .5);
+      rayUniforms.uStrength.value = 1.3 * light * light * (1 - ease * .5);
       dustMaterial.opacity = .6 * light * (.4 + .6 * THREE.MathUtils.smoothstep(distance, .35, .8));
       for (let i = 0; i < dustCount; i++) {
         const a = dustSeed[i * 4], b = dustSeed[i * 4 + 1], c = dustSeed[i * 4 + 2], s = dustSeed[i * 4 + 3];
