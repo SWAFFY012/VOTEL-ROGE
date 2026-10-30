@@ -7,6 +7,7 @@ import { clickSound, restart, soundPreference, travel } from '@/lib/navigation';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import SoftBlurIn from '@/components/ui/soft-blur-in';
 import { createStringSounds } from '@/lib/stringSounds';
+import { createRoomAmbience } from '@/lib/roomAmbience';
 
 // Physical key positions (layout-independent): thickest string on Q.
 const stringKeys = ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY'];
@@ -132,6 +133,8 @@ export default function ReleasePage() {
     root.style.overflow = 'hidden';
     return () => { root.style.overflow = previous; };
   }, []);
+  // Birds outside the window, a broadcast behind the right wall.
+  useEffect(() => createRoomAmbience(() => soundPreference.enabled).dispose, []);
 
   useEffect(() => {
     const container = host.current!;
