@@ -227,6 +227,7 @@ export default function App() {
       // not the visitor scrolling back, so it must not blink back to the child.
       let settleUntil=0;
       let finale:'idle'|'playing'|'done'='idle',cardsDelay:gsap.core.Tween|undefined,eyeDelay:gsap.core.Tween|undefined;
+      let musicAtEnd=false;
       const runFinale=(forward:boolean)=>{
         finale='playing';
         if(forward)showChapter(-1);
@@ -234,6 +235,12 @@ export default function App() {
         // The eye only starts once the last phrase has fully left the screen.
         const exit=forward&&chapterAnimation?Math.max(0,chapterAnimation.duration()-chapterAnimation.time()):0;
         eyeDelay=gsap.delayedCall(media.matches?0:forward?exit+.35:0,()=>{
+          // The blink is the cut in the music too: the old track fades away
+          // through the first blink and the misted look after it, and the new
+          // one comes in with the second blink (it starts closing at 1.33 s)
+          // and is up by the time the eye has opened again (2.6 s).
+          musicAtEnd=forward;
+          setScene(forward?'misery':'solitude',{out:1.3,entry:1.33,in:1.3});
           const eye=blink.current;
           const swap=()=>{finalCover.classList.toggle('is-shown',forward);};
           (eye?eye.play({from:forward?childCover:finalCover,onClosed:swap,reduced:media.matches}):Promise.resolve(swap())).then(()=>{
@@ -261,7 +268,7 @@ export default function App() {
       const jumpToFinal=()=>{
         wakeHero();changePeel(1);
         finale='done';settleUntil=performance.now()+1200;eyeDelay?.kill();cardsDelay?.kill();showChapter(-1);
-        finalCover.classList.add('is-shown');
+        finalCover.classList.add('is-shown');musicAtEnd=true;
         ScrollTrigger.refresh();
         window.scrollTo({top:document.documentElement.scrollHeight-innerHeight,behavior:'instant'});
         trigger.update();trigger.getTween()?.progress(1);tl.progress(1);
@@ -323,8 +330,8 @@ export default function App() {
         // Music: MIZERY under the film and the flower sheet; «Летов 88» from
         // the first pull of the sheet; «Сто лет одиночества» once the child
         // cover has mostly arrived; MIZERY again when the eye opens on the
-        // flower cover at the end.
-        setScene(finalCover.classList.contains('is-shown')?'misery':transitionMotion.current.progress>=.45?'solitude':peelProgressRef.current>.01||sceneActive?'letov':'misery');
+        // flower cover at the end, changing with the blink (runFinale).
+        setScene(musicAtEnd?'misery':transitionMotion.current.progress>=.45?'solitude':peelProgressRef.current>.01||sceneActive?'letov':'misery');
         if(fastForward&&finale==='done'&&cardsReveal.progress()===1){fastForward=false;gsap.globalTimeline.timeScale(1);}
         if(motion.current.reduced)tl.progress(1);
       };tick();

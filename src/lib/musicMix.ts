@@ -17,6 +17,8 @@ const LEVEL = .35;
 // Seconds: the old track fades out over FADE_OUT; the new one waits a moment
 // under the reverb and rises over FADE_IN.
 const FADE_OUT = 3.2, FADE_IN = 3.6, ENTRY = .7;
+export type Fade = { out: number; entry: number; in: number };
+const SLOW: Fade = { out: FADE_OUT, entry: ENTRY, in: FADE_IN };
 
 type Channel = { element: HTMLAudioElement; dry: GainNode; send: GainNode; pan: StereoPannerNode; idle?: ReturnType<typeof setTimeout> };
 type Graph = { context: AudioContext; master: GainNode; channels: Record<Scene, Channel> };
@@ -91,7 +93,8 @@ export function createMusicMix() {
     fadeOut: () => ramp(0),
     get paused() { return elements[scene].paused; },
     get scene() { return scene; },
-    setScene(next: Scene) {
+    // fade: a quicker change can be timed to a cut on screen (the blink).
+    setScene(next: Scene, fade: Fade = SLOW) {
       if (next === scene) return;
       const previous = scene; scene = next;
       if (!graph) {
@@ -103,17 +106,18 @@ export function createMusicMix() {
       const out = channels[previous], into = channels[next];
       // The leaving track swells into the reverb as it fades, then the send closes.
       const now = context.currentTime;
-      glide(out.dry.gain, context, 0, FADE_OUT);
-      glide(out.send.gain, context, .85, FADE_OUT * .5);
-      out.send.gain.setTargetAtTime(0, now + FADE_OUT * .6, .5);
+      glide(out.dry.gain, context, 0, fade.out);
+      glide(out.send.gain, context, .85, fade.out * .5);
+      out.send.gain.setTargetAtTime(0, now + fade.out * .6, .5);
       clearTimeout(out.idle);
-      out.idle = setTimeout(() => { if (scene !== previous) out.element.pause(); }, (FADE_OUT + 4.6) * 1000);
+      out.idle = setTimeout(() => { if (scene !== previous) out.element.pause(); }, (fade.out + 4.6) * 1000);
       // The arriving track comes out of the same reverb: a little wet at first.
       clearTimeout(into.idle);
-      glide(into.dry.gain, context, 1, FADE_IN, ENTRY);
+      glide(into.dry.gain, context, 1, fade.in, fade.entry);
       into.send.gain.cancelScheduledValues(now);
-      into.send.gain.setTargetAtTime(.45, now, .05);
-      into.send.gain.setTargetAtTime(0, now + ENTRY, FADE_IN / 3);
+      // Silent until just before its entry, so a long wait stays quiet.
+      into.send.gain.setTargetAtTime(.45, now + Math.max(0, fade.entry - .3), .05);
+      into.send.gain.setTargetAtTime(0, now + fade.entry, fade.in / 3);
       if (into.element.paused) void into.element.play().catch(() => {});
     },
     // -1 left ear … 0 centre … 1 right ear; follows its input smoothly.

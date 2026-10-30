@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
-import { createMusicMix, type MusicMix, type Scene } from '@/lib/musicMix';
+import { createMusicMix, type Fade, type MusicMix, type Scene } from '@/lib/musicMix';
 
 export function useSiteAudio() {
   const music = useRef<MusicMix | null>(null);
@@ -105,7 +105,7 @@ export function useSiteAudio() {
   }, [startMusic]);
 
   // Which track plays, and where Letov's track sits between the ears.
-  const setScene = useCallback((scene: Scene) => { music.current?.setScene(scene); }, []);
+  const setScene = useCallback((scene: Scene, fade?: Fade) => { music.current?.setScene(scene, fade); }, []);
   const setPan = useCallback((scene: Scene, pan: number) => { music.current?.setPan(scene, pan); }, []);
 
   return { setScene, setPan, hover, click, guitar, toggle, soundEnabled, needsInteraction, setSoundEnabled, playEffect };

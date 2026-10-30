@@ -12,13 +12,14 @@ All three made with ffmpeg: high-pass 28 Hz, −2.5 dB at 1.2 kHz, −4.5 dB at
 loudnorm to −20 LUFS / −2 dBTP; AAC 192 kbps (aac_at).
 
 Release page room ambience (user-supplied MP3s), made with ffmpeg at 22.05 kHz:
-room-birds.wav ← «morning-meadow-birdsongs-looping».mp3 — birds outside the window.
-  High-pass 350 Hz, low-pass 5.2 kHz, high shelf −7 dB from 2.6 kHz, stereo
-  narrowed (extrastereo 0.55), 45 % wet convolution with a 2.6 s dark noise
-  tail. Rendered over three loops and cut to the middle one, so the reverb
-  wraps and the 25.2 s loop is seamless. −26 LUFS, 16-bit WAV (no AAC gap).
+room-birds.wav ← «morning-meadow-birdsongs-looping».mp3 — birds far off,
+  through an open window pane. High-pass 500 Hz, low-pass 3.6 kHz, high shelf
+  −9 dB from 1.8 kHz, stereo narrowed to the window (extrastereo 0.3), dry
+  0.55 against 0.8 wet convolution with a 2.6 s dark noise tail. Rendered
+  over three loops and cut to the middle one, so the reverb wraps and the
+  25.2 s loop is seamless. −36 LUFS, 16-bit WAV (no AAC gap).
 room-tv.m4a ← «nachalo-i-konec-voskresnoi-peredachi-1965».mp3 from 0:25 — the
   broadcast behind the right wall. Mono, 170–650 Hz band, +3 dB at 380 Hz,
   60 % wet 0.8 s small-room convolution; right channel as is, left channel
   low-passed 420 Hz, −9 dB, 0.7 ms later. 1.5 s fade in, 2.5 s fade out.
-  −32 LUFS (6 LU under the birds), AAC 96 kbps.
+  −32 LUFS, AAC 96 kbps.

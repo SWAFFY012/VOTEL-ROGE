@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import fit from './guitarFit.json';
 import { smoothGeometry, smoothLevel } from './smoothGeometry';
 
@@ -142,6 +143,54 @@ function markRim(source: THREE.BufferGeometry, matrix: THREE.Matrix4) {
   return geometry;
 }
 
+// The tuners. In the model each shaft runs through the middle of the
+// headstock's thickness, so the buttons stick straight out of its edges with
+// nothing behind them. On the real guitar the machines sit on the back: a
+// gear housing on the back face, its shaft running just behind the face out
+// to the button. Each tuner (shaft and button) moves back behind the face,
+// following the headstock's pitch, and gets its housing. All in the model's
+// frame (top towards +x), before the meshes are smoothed.
+function mountTuners(model: THREE.Object3D, head: THREE.Mesh, tuners: THREE.Mesh, material: THREE.Material, own: <T extends { dispose: () => void }>(item: T) => T) {
+  const v = new THREE.Vector3();
+  const points = (mesh: THREE.Mesh) => {
+    const position = mesh.geometry.attributes.position;
+    return Array.from({ length: position.count }, (_, i) => v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).clone());
+  };
+  const headPoints = points(head), tunerPoints = points(tuners);
+  // The back face of the headstock at a height: its furthest point backwards.
+  const backAt = (y: number) => headPoints.reduce((x, p) => (Math.abs(p.y - y) < .15 ? Math.min(x, p.x) : x), Infinity);
+  // Rows of tuners: heights more than .2 apart.
+  const heights = tunerPoints.map((p) => p.y).sort((a, b) => a - b);
+  const rows: number[][] = [];
+  heights.forEach((y) => { const row = rows[rows.length - 1]; if (row && y - row[row.length - 1] < .2) row.push(y); else rows.push([y]); });
+  const centres = rows.map((row) => (row[0] + row[row.length - 1]) / 2);
+  const rowOf = (y: number) => centres.reduce((best, c, i) => (Math.abs(c - y) < Math.abs(centres[best] - y) ? i : best), 0);
+  // The back face's pitch, for laying the housings flat on it.
+  const tilt = Math.atan2(backAt(centres[0]) - backAt(centres[centres.length - 1]), centres[centres.length - 1] - centres[0]);
+  const shifts = centres.map((y, i) => {
+    const xs = tunerPoints.filter((p) => rowOf(p.y) === i).map((p) => p.x);
+    return backAt(y) - .085 - (Math.min(...xs) + Math.max(...xs)) / 2;
+  });
+  const position = tuners.geometry.attributes.position, inverse = tuners.matrixWorld.clone().invert();
+  tunerPoints.forEach((p, i) => { p.x += shifts[rowOf(p.y)]; v.copy(p).applyMatrix4(inverse); position.setXYZ(i, v.x, v.y, v.z); });
+  position.needsUpdate = true;
+  tuners.geometry.computeBoundingSphere();
+  // A housing where each shaft starts, on the edge of the headstock it serves.
+  const middle = headPoints.reduce((sum, p) => sum + p.z, 0) / headPoints.length;
+  const housing = own(new RoundedBoxGeometry(.11, .3, .3, 3, .03));
+  centres.forEach((y, i) => {
+    for (const side of [-1, 1]) {
+      const zs = tunerPoints.filter((p) => rowOf(p.y) === i && Math.sign(p.z - middle) === side).map((p) => p.z);
+      if (!zs.length) continue;
+      const inner = side < 0 ? Math.max(...zs) : Math.min(...zs);
+      const mesh = new THREE.Mesh(housing, material);
+      mesh.position.set(backAt(y) - .045, y, inner - side * .1);
+      mesh.rotation.z = tilt;
+      model.add(mesh);
+    }
+  });
+}
+
 // lit: the photographed top and back respond to scene lights as lacquered
 // wood (clearcoat); without it they are a little softer, for the dark scroll scene.
 export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () => void, { lit = false } = {}): GuitarModel {
@@ -220,6 +269,9 @@ export function createGuitar(renderer: THREE.WebGLRenderer, onFrontLoaded?: () =
     const sideBand = new THREE.Vector3(1, 0, 0);
     const meshes: THREE.Mesh[] = [];
     model.traverse((object) => { if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh); });
+    const named = (name: string) => meshes.find((mesh) => (mesh.material as THREE.Material).name === name);
+    const headMesh = named('Material.002'), tunerMesh = named('Material.008');
+    if (headMesh && tunerMesh) mountTuners(model, headMesh, tunerMesh, own(new THREE.MeshStandardMaterial({ color: 0x8e887d, metalness: .85, roughness: .36 })), own);
     meshes.forEach((mesh) => {
       const material = mesh.material as THREE.MeshStandardMaterial;
       owned.push(mesh.geometry, material); if (material.map) owned.push(material.map);

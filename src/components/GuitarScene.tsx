@@ -31,13 +31,17 @@ export default function GuitarScene({ motion }: { motion: React.RefObject<Guitar
     key.position.set(-4, 5, 7); scene.add(key);
     const rim = new THREE.DirectionalLight(0xffffff, 3);
     rim.position.set(4, 2, -5); scene.add(rim);
-    let height = innerHeight;
+    // Measure the stage itself and follow every change of its size (Safari's
+    // 100dvh changes without a window resize). The canvas keeps its CSS size,
+    // the whole stage: a size measured mid-layout could only blur the guitar
+    // for a frame, never crop it to a strip with the guitar shrunk inside.
     const resize = () => {
-      height = container.clientHeight;
-      camera.aspect = container.clientWidth / height; camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, height);
+      const width = container.clientWidth || innerWidth, height = container.clientHeight || innerHeight;
+      camera.aspect = width / height; camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
     };
     resize(); window.addEventListener('resize',resize);
+    const observer = new ResizeObserver(resize); observer.observe(container);
     const target={x:0,y:0},pointer={x:0,y:0};
     const move=(event:PointerEvent)=>{target.x=event.clientX/innerWidth*2-1;target.y=event.clientY/innerHeight*2-1;};
     const leave=()=>{target.x=0;target.y=0;};
@@ -65,7 +69,7 @@ export default function GuitarScene({ motion }: { motion: React.RefObject<Guitar
     };
     draw();
     return () => {
-      cancelAnimationFrame(frame); window.removeEventListener('resize',resize);window.removeEventListener('pointermove',move);document.documentElement.removeEventListener('pointerleave',leave);
+      cancelAnimationFrame(frame); window.removeEventListener('resize',resize); observer.disconnect();window.removeEventListener('pointermove',move);document.documentElement.removeEventListener('pointerleave',leave);
       environment.dispose(); pmrem.dispose(); renderer.dispose(); model.dispose();
       renderer.domElement.remove();
     };
