@@ -7,10 +7,14 @@ export type RoomAmbience = { dispose: () => void };
 
 // Overall level of the room against the guitar strings (master .85).
 const LEVEL = .7;
+// The birds against the broadcast: barely there, far off through the window
+// (about −15 dB on the file's own level).
+const BIRDS = .18;
 
 export function createRoomAmbience(isEnabled: () => boolean): RoomAmbience {
   const context = new AudioContext();
   const master = context.createGain(); master.gain.value = 0; master.connect(context.destination);
+  const birdsLevel = context.createGain(); birdsLevel.gain.value = BIRDS; birdsLevel.connect(master);
   let disposed = false, started = false;
 
   // The birds are a short loop: a decoded buffer loops without a gap.
@@ -28,7 +32,7 @@ export function createRoomAmbience(isEnabled: () => boolean): RoomAmbience {
     birds.then((buffer) => {
       if (disposed) return;
       const loop = context.createBufferSource();
-      loop.buffer = buffer; loop.loop = true; loop.connect(master);
+      loop.buffer = buffer; loop.loop = true; loop.connect(birdsLevel);
       // Not from the very top every visit.
       loop.start(0, Math.random() * buffer.duration);
     }).catch(() => {});

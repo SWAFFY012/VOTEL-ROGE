@@ -1,0 +1,13 @@
+{
+ "source": "scripts/photos/letov-kitten-neck.jpg",
+ "box": [
+  -0.28,
+  -1.2594969718586893,
+  0.28,
+  3.43
+ ],
+ "size": [
+  256,
+  2048
+ ]
+}

@@ -14,8 +14,7 @@
 //  2b. Sides: the profile photo (public/guitar-side-4k.webp) is projected flat
 //     onto the rim and the sides of the neck and headstock, each part fitted
 //     box to box to its stretch of the silhouette.
-//  3. Headstock face: projected straight from the archive photo
-//     (public/letov-guitars.png), box to box, like the old model.
+//  3. Headstock face and fretboard: see scripts/build-neck-photo.mjs.
 //  4. Strings: tailpiece, saddle, nut and tuner post of each string, read
 //     from the model's own string meshes, in the site's guitar frame.
 //
@@ -27,7 +26,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 const cv = await cvReady;
 // The front photo may be rewritten below (--mask-front); never serve it from cache.
 sharp.cache(false);
-const glbPath = 'public/models/letov-guitar.glb', frontPath = 'public/guitar-front-4k.webp', backPath = 'public/guitar-back-4k.webp', archivePath = 'public/letov-guitars.png';
+const glbPath = 'public/models/letov-guitar.glb', frontPath = 'public/guitar-front-4k.webp', backPath = 'public/guitar-back-4k.webp';
 const debug = process.argv.includes('--debug') ? 'test-results' : '';
 
 // ── glTF access ──
@@ -311,20 +310,6 @@ for (const y of fretYs) { const last = frets[frets.length - 1]; if (last && last
 const fretboard = { box: board, frets: frets.map((f) => +(f.sum / f.n).toFixed(4)) };
 console.log('fretboard box', board.map((v) => +v.toFixed(3)), 'frets', fretboard.frets.length);
 
-// ── 3. headstock face → archive photo, box to box ──
-const head = gltf.meshes[headMesh].primitives[0];
-const headPos = read(head.attributes.POSITION), headNormal = read(head.attributes.NORMAL), headScene = toScene(headMesh);
-const headBox = [Infinity, Infinity, -Infinity, -Infinity];
-for (let i = 0; i < headPos.length / 3; i++) {
-  if (facing(headMesh, headNormal, i) < .5) continue;
-  const [, y, z] = headScene([headPos[i * 3], headPos[i * 3 + 1], headPos[i * 3 + 2]]);
-  headBox.splice(0, 4, Math.min(headBox[0], z), Math.min(headBox[1], y), Math.max(headBox[2], z), Math.max(headBox[3], y));
-}
-// Headstock face in the 660×777 archive photo: from the top to the nut.
-const archiveHead = [133, 42, 179, 143.5];
-const headstock = { scene: headBox, photo: archiveHead };
-console.log('headstock scene box (z, y)', headBox.map((v) => +v.toFixed(3)));
-
 // ── 4. strings ──
 // Site frame: x = −(z − zc)·s, y = (y − yc)·s, z = (x − xc)·s. Thickest string first.
 const stringMeshes = gltf.meshes.map((m, i) => i).filter((i) => gltf.materials[gltf.meshes[i].primitives[0].material].name === 'Material.003');
@@ -358,7 +343,6 @@ const fit = {
   rear: { body: rear, neck: rearNeck, head: rearHead, size: [RW, RH] },
   side: { body: sideBody, neck: sideNeck, head: sideHead, size: [SW, SH] },
   fretboard,
-  headstock: { ...headstock, size: [660, 777] },
   strings: strings.map((s) => ({ tail: site(s.tail), saddle: site(s.saddle), nut: site(s.nut), post: site(s.post) })),
 };
 await writeFile('src/lib/guitarFit.json', JSON.stringify(fit, null, 1));

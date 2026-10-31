@@ -38,13 +38,18 @@ type Controls = { zoomOut: () => void; zoomBy: (factor: number) => void; pluck: 
 // home camera (the window wall, the side walls, the floor), read off the
 // photo's one-point perspective. From home it is exactly the photo; as the
 // camera moves in or sideways, near and far parts of the room shift against
-// each other like a real room. The mesh reaches a little past the photo so a
-// moved camera never sees its edge (past the border the photo is mirrored).
+// each other like a real room. Only gently: the box is a rough guess, and at
+// full strength the things standing by the side walls (a guitar, the rack's
+// wheels) were stretched flat along them. The mesh reaches a little past the
+// photo so a moved camera never sees its edge (past the border the photo is
+// mirrored).
 const roomVertex = `
   uniform vec2 uHalf; uniform float uOffsetY, uBack, uHome;
   varying vec2 vUv;
   // The window wall in photo uv: its left and right corners and the floor line.
   const vec3 wall = vec3(.305, .64, .135);
+  // How far the side walls and the floor come forward of the window wall: 0 a flat photo.
+  const float relief = .35;
   void main(){
     vUv = uv;
     vec2 ray = vec2((uv.x - .5) * 2. * uHalf.x, uOffsetY + (uv.y - .5) * 2. * uHalf.y);
@@ -54,7 +59,7 @@ const roomVertex = `
     if (ray.x < left) depth = min(depth, uBack * left / ray.x);
     if (ray.x > right) depth = min(depth, uBack * right / ray.x);
     if (floorLine < 0. && ray.y < floorLine) depth = min(depth, uBack * floorLine / ray.y);
-    depth = max(depth, 2.);
+    depth = mix(uBack, max(depth, 2.), relief);
     gl_Position = projectionMatrix * viewMatrix * vec4(ray * depth, uHome - depth, 1.);
   }`;
 // Daylight from the window: it falls off into the room and breathes with the
@@ -105,18 +110,8 @@ const raysFragment = `
 const flatVertex = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`;
 
 // Clouds over the window: a slow, irregular swell of the daylight, shared by
-// the room, the rays, the guitar's lights and its shadow.
+// the room, the rays and the guitar's lights.
 const daylight = (t: number) => 1 + .1 * Math.sin(t * .21) + .06 * Math.sin(t * .53 + 1.3) + .035 * Math.sin(t * 1.07 + .4);
-
-// A soft dark blot (shadow) on a canvas, darkest at (x, y) of 128 × 128.
-const blot = (x: number, y: number, radius: number) => {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
-  const paint = canvas.getContext('2d')!;
-  const gradient = paint.createRadialGradient(x, y, 0, x, y, radius);
-  gradient.addColorStop(0, 'rgba(0,0,0,1)'); gradient.addColorStop(.4, 'rgba(0,0,0,.5)'); gradient.addColorStop(1, 'rgba(0,0,0,0)');
-  paint.fillStyle = gradient; paint.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(canvas);
-};
 
 export default function ReleasePage() {
   const host = useRef<HTMLDivElement>(null);
@@ -206,17 +201,6 @@ export default function ReleasePage() {
     const black = new THREE.MeshBasicMaterial({ color: 0 });
     const windowCentre = new THREE.Vector3(), lightSource = new THREE.Vector3();
 
-    // Shadow on the carpet: a dark contact patch under the guitar and a long
-    // soft one thrown toward the viewer by the window behind it.
-    // (The cast one is darkest at its far end, under the guitar: the canvas
-    // top lies away from the viewer.)
-    const contactTexture = blot(64, 64, 64), castTexture = blot(64, 40, 100);
-    const shadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    const contactMaterial = new THREE.MeshBasicMaterial({ map: contactTexture, transparent: true, depthWrite: false, opacity: .9 });
-    const castMaterial = new THREE.MeshBasicMaterial({ map: castTexture, transparent: true, depthWrite: false, opacity: .45 });
-    const contact = new THREE.Mesh(shadowGeometry, contactMaterial), cast = new THREE.Mesh(shadowGeometry, castMaterial);
-    const shadows = new THREE.Group(); shadows.add(cast, contact); scene.add(shadows);
-
     // Dust floating in the daylight between the window and the viewer; light
     // adds to the colour, never covers it.
     const lightBlend = { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor } as const;
@@ -298,8 +282,6 @@ export default function ReleasePage() {
       windowCentre.set((.495 - .5) * 2 * halfY * 1671 / 941, roomUniforms.uOffsetY.value + (.65 - .5) * 2 * halfY, -1).multiplyScalar(roomUniforms.uBack.value);
       windowCentre.z += home.z;
       windowLight.position.copy(windowCentre); windowLight.target.position.set(0, baseY, 0); windowLight.target.updateMatrixWorld();
-      contact.scale.set(2.3 * scale, 1, 2.2 * scale); contact.position.set(0, floorY + .003, .15 * scale);
-      cast.position.set(0, floorY + .002, 1.2 * scale);
       const pixelRatio = renderer.getPixelRatio();
       mask.setSize(Math.round(w * pixelRatio / 2), Math.round(h * pixelRatio / 2));
     };
@@ -460,11 +442,19 @@ export default function ReleasePage() {
       }
       if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId);
     };
+    // Wheel and two-finger scroll move along the guitar, up and down, at the
+    // distance the camera is at; a pinch (ctrl + wheel, as trackpads send it)
+    // zooms. From the full view, where there is nowhere to move, scrolling up
+    // dives in to the spot under the cursor, like a double click.
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       if (view.zoom > 0) { if (event.deltaY > 0) leaveStrings(); return; }
       const p = toNdc(event.clientX, event.clientY);
-      zoomAt(p.x, p.y, Math.exp(THREE.MathUtils.clamp(event.deltaY, -120, 120) * .0022)); report();
+      const delta = THREE.MathUtils.clamp(event.deltaY * (event.deltaMode === 1 ? 16 : 1), -120, 120);
+      if (event.ctrlKey) zoomAt(p.x, p.y, Math.exp(delta * .01));
+      else if (goal.d > home.z - .05) { if (delta < 0) zoomAt(p.x, p.y, .38); }
+      else { goal.y -= delta * 2 * tanHalf * goal.d / container.clientHeight; clampGoal(); }
+      report();
     };
     // Double click / double tap: step closer to exactly that spot.
     const dive = (event: MouseEvent) => {
@@ -534,12 +524,6 @@ export default function ReleasePage() {
       roomUniforms.uLight.value = light;
       windowLight.intensity = 4.2 * light * light;
       sky.intensity = .38 * (.8 + .2 * light);
-      // The shadow follows the guitar's turn: wide face-on, narrow edge-on.
-      const across = .32 + .68 * Math.abs(Math.cos(holder.rotation.y));
-      contact.scale.x = 2.4 * scale * across;
-      cast.scale.set(2.2 * scale * across, 1, 2.8 * scale);
-      contactMaterial.opacity = .9 * (1 - ease * .6);
-      castMaterial.opacity = .55 * light * light * (1 - ease * .6);
       // Rays from wherever the window is on screen now.
       lightSource.copy(windowCentre).project(camera);
       rayUniforms.uSource.value.set(lightSource.x * .5 + .5, lightSource.y * .5 + .5);
@@ -564,9 +548,9 @@ export default function ReleasePage() {
       });
       // Window mask with the guitar in black, for the rays.
       renderer.setRenderTarget(mask); renderer.clear(); renderer.render(windowScene, camera);
-      scene.overrideMaterial = black; room.visible = shadows.visible = dust.visible = false;
+      scene.overrideMaterial = black; room.visible = dust.visible = false;
       renderer.autoClear = false; renderer.clearDepth(); renderer.render(scene, camera);
-      scene.overrideMaterial = null; room.visible = shadows.visible = dust.visible = true;
+      scene.overrideMaterial = null; room.visible = dust.visible = true;
       renderer.setRenderTarget(null); renderer.autoClear = true;
       renderer.render(scene, camera);
       renderer.autoClear = false; renderer.render(raysScene, flatCamera); renderer.autoClear = true;
@@ -582,7 +566,6 @@ export default function ReleasePage() {
       dustGeometry.dispose(); dustMaterial.dispose(); dustTexture.dispose();
       roomGeometry.dispose(); roomMaterial.dispose(); windowMaterial.dispose(); photo.dispose(); mask.dispose();
       raysGeometry.dispose(); raysMaterial.dispose(); black.dispose();
-      shadowGeometry.dispose(); contactTexture.dispose(); castTexture.dispose(); contactMaterial.dispose(); castMaterial.dispose();
       envParts.forEach(({ geometry, material }) => { geometry.dispose(); material.dispose(); });
       environment.dispose(); pmrem.dispose(); sounds.dispose(); clearTimeout(unlight); factTimers.forEach((timer) => clearTimeout(timer));
       model.dispose(); renderer.dispose(); renderer.domElement.remove();
@@ -591,12 +574,12 @@ export default function ReleasePage() {
 
   const zoomed = zoom.free || zoom.strings;
   return <main className="release">
-    <div className={`release-stage${zoom.strings ? ' is-zoomed' : ''}`} ref={host} role="img" aria-label="Гитара Егора Летова. Потяните, чтобы повернуть; колесо или двойной клик приближают; нажмите на гриф, чтобы открыть струны."/>
+    <div className={`release-stage${zoom.strings ? ' is-zoomed' : ''}`} ref={host} role="img" aria-label="Гитара Егора Летова. Потяните, чтобы повернуть; двойной клик или щипок приближают, колесо ведёт вверх и вниз; нажмите на гриф, чтобы открыть струны."/>
     <div className="page-nav" role="group" aria-label="Навигация">
       <button onClick={() => { clickSound(); travel('#/final'); }}><ArrowLeft size={18}/><span>Назад</span></button>
       <button onClick={() => { clickSound(); restart(180); }}><RotateCcw size={17}/><span>В начало</span></button>
     </div>
-    <p className="release-hint" aria-live="polite">{zoom.strings ? 'Зацепите струну и отпустите' : (touch ? 'Проведите — повернуть · щипок — приблизить · клавиши — сыграть' : 'Потяните — повернуть · колесо или двойной клик — приблизить · Q–Y — сыграть')}</p>
+    <p className="release-hint" aria-live="polite">{zoom.strings ? 'Зацепите струну и отпустите' : (touch ? 'Проведите — повернуть · щипок — приблизить · клавиши — сыграть' : 'Потяните — повернуть · двойной клик или щипок — приблизить · колесо — вверх-вниз · Q–Y — сыграть')}</p>
     <div className="string-keys" role="group" aria-label="Струны гитары: клавиши Q, W, E, R, T, Y — от толстой к тонкой">
       {keyLabels.map((label, index) => <button key={label} className={litKey === index ? 'is-lit' : ''} aria-label={`Струна ${6 - index}, клавиша ${label}`}
         onPointerDown={(event) => { event.preventDefault(); controls.current.pluck(index); }}

@@ -8,3 +8,6 @@ test-results/
 /MIZERY (site version).wav
 /Летов 88.wav
 /Сто лет одиночества.wav
+
+# Downloaded source models (large); the site uses public/models/*.glb
+/scripts/models/
